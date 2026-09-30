@@ -1,0 +1,17 @@
+{
+  "name": "escape-fm",
+  "owner": {
+    "name": "Cosmo",
+    "email": "hello@escape.fm"
+  },
+  "metadata": {
+    "description": "Plugins for escape.fm, background music that follows your work."
+  },
+  "plugins": [
+    {
+      "name": "escape-fm",
+      "source": "./plugin",
+      "description": "Background music that follows your work in Claude Code."
+    }
+  ]
+}

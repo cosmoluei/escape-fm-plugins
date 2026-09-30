@@ -1,0 +1,22 @@
+{
+  "name": "escape-fm",
+  "version": "0.1.0",
+  "description": "Background music that follows your work. Sends two tags per conversation (work mode, agent state) to escape.fm; never your prompts, code or file names.",
+  "author": {
+    "name": "Cosmo",
+    "email": "hello@escape.fm",
+    "url": "https://escape.fm"
+  },
+  "homepage": "https://escape.fm",
+  "keywords": [
+    "music",
+    "focus",
+    "ambient",
+    "background-music",
+    "productivity"
+  ],
+  "displayName": "escape.fm",
+  "repository": "https://github.com/cosmoluei/escape-fm-plugins",
+  "license": "MIT",
+  "logo": "assets/logo.svg"
+}

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" role="img">
+  <title>escape.fm</title>
+  <defs>
+    <radialGradient id="orb-fill" gradientUnits="userSpaceOnUse" cx="62" cy="10" r="80">
+      <stop offset=".2" stop-color="#ffb38a"/>
+      <stop offset=".42" stop-color="#a877e6"/>
+      <stop offset=".62" stop-color="#7a5cff"/>
+      <stop offset="1" stop-color="#4536d6"/>
+    </radialGradient>
+  </defs>
+  <path id="orb" fill="url(#orb-fill)" d="M63.52 34.48A32 32 0 1 1 37.52 8.48A10 10 0 0 1 45.32 15.3A17.5 17.5 0 0 0 56.7 26.68A10 10 0 0 1 63.52 34.48Z"/>
+  <circle id="drop" cx="62" cy="10" r="10" fill="#ffb38a"/>
+</svg>

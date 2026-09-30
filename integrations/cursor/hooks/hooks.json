@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "sessionStart": [{ "command": "node ./scripts/hook.mjs sessionStart", "timeout": 5 }],
+    "beforeSubmitPrompt": [{ "command": "node ./scripts/hook.mjs beforeSubmitPrompt", "timeout": 5 }],
+    "preToolUse": [{ "command": "node ./scripts/hook.mjs preToolUse", "timeout": 5 }],
+    "postToolUse": [{ "command": "node ./scripts/hook.mjs postToolUse", "timeout": 5 }],
+    "postToolUseFailure": [{ "command": "node ./scripts/hook.mjs postToolUseFailure", "timeout": 5 }],
+    "stop": [{ "command": "node ./scripts/hook.mjs stop", "timeout": 5 }],
+    "sessionEnd": [{ "command": "node ./scripts/hook.mjs sessionEnd", "timeout": 5 }]
+  }
+}
