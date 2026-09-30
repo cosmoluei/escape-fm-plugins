@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Feeds each integration's hook script the events its agent sends, in the shape that
-// agent documents, and checks what reaches the relay: the four fields and nothing else.
+// agent documents, and checks what reaches the relay: the four fields and nothing else,
+// under a User-Agent that names the integration and its version and nothing more.
 // The relay here is a stand-in that only records requests; nothing leaves the machine
 // and nothing outside a temporary folder is touched.
 //
@@ -20,6 +21,14 @@ const HOOK = {
   codex: path.join(ROOT, 'integrations/codex/scripts/hook.mjs'),
   cursor: path.join(ROOT, 'integrations/cursor/scripts/hook.mjs'),
 }
+/** What each integration calls itself in its User-Agent, and where its version comes from. */
+const CLIENT = {
+  claude: { name: 'claude-code', manifest: 'plugin/.claude-plugin/plugin.json' },
+  codex: { name: 'codex', manifest: 'integrations/codex/.codex-plugin/plugin.json' },
+  cursor: { name: 'cursor', manifest: 'integrations/cursor/.cursor-plugin/plugin.json' },
+}
+/** The header, exactly: `escape-fm/<version> (<client>)`. */
+const userAgent = (tool) => `escape-fm/${JSON.parse(readFileSync(path.join(ROOT, CLIENT[tool].manifest), 'utf8')).version} (${CLIENT[tool].name})`
 const MODES = ['deep', 'debug', 'explore', 'ideate', 'analyze', 'polish', 'routine', 'plan']
 const AGENTS = ['user', 'running', 'waiting', 'idle']
 
@@ -142,13 +151,24 @@ function checkKept(m) {
   }
 }
 
-/** The promise, checked: exactly four fields go out, under the key, and nothing private is sent. */
-function checkPrivacy(m, ids) {
+/**
+ * The promise, checked: exactly four fields go out, under the key, and nothing private is sent.
+ * The one header that says anything beyond that names the integration and its version, openly.
+ */
+function checkPrivacy(m, ids, tool) {
   const key = JSON.parse(readFileSync(path.join(m.fm, 'config.json'), 'utf8')).key
   assert.ok(m.server.seen.length > 0, 'something was posted')
   for (const request of m.server.seen) {
     assert.equal(`${request.method} ${request.url}`, 'POST /v1/signal')
     assert.equal(request.headers.authorization, `Bearer ${key}`)
+    assert.equal(request.headers['user-agent'], userAgent(tool))
+    assert.match(request.headers['user-agent'], /^escape-fm\/\d+\.\d+\.\d+ \((claude-code|codex|cursor)\)$/)
+    // what curl, or Node's fetch without it, sends besides, with the same value on every machine; anything more would be ours
+    const generic = { 'accept-language': '*', 'sec-fetch-mode': 'cors' }
+    for (const [name, value] of Object.entries(generic)) if (name in request.headers) assert.equal(request.headers[name], value)
+    const known = ['host', 'accept', 'accept-encoding', 'content-type', 'content-length', 'authorization', 'user-agent', 'connection', ...Object.keys(generic)]
+    const extra = Object.keys(request.headers).filter((name) => !known.includes(name))
+    assert.deepEqual(extra, [], `headers sent: ${Object.keys(request.headers).join(', ')}`)
     const body = JSON.parse(request.body)
     const fields = Object.keys(body).sort().join(',')
     assert.ok(fields === 'agent,mode,session,ts' || fields === 'end,session,ts', `fields posted: ${fields}`)
@@ -201,7 +221,7 @@ await test('Claude Code: events become the two tags', async () => {
   ])
   assert.deepEqual(JSON.parse(outputs[0]), { systemMessage: 'escape.fm is set up. Run /escape-fm:open to open the player paired with this machine.' })
   assert.ok(outputs.slice(1).every((out) => out === ''), 'only the first session start says anything')
-  checkPrivacy(m, [id])
+  checkPrivacy(m, [id], 'claude')
   assert.deepEqual(allFiles(path.join(m.fm, 'sessions')), [], 'the session is forgotten when it ends')
   m.done()
 })
@@ -255,7 +275,7 @@ await test('Codex: events become the two tags', async () => {
   const said = JSON.parse(outputs[0]).systemMessage
   assert.match(said, /^escape\.fm is set up\. To open the player paired with this machine, run in your own terminal: node ".*open\.mjs"$/)
   assert.ok(outputs.slice(1).every((out) => out === ''), 'no other event prints anything, so Codex is never answered')
-  checkPrivacy(m, [id])
+  checkPrivacy(m, [id], 'codex')
   assert.deepEqual(allFiles(path.join(m.fm, 'sessions')), [])
   m.done()
 })
@@ -321,7 +341,7 @@ await test('Cursor: events become the two tags, and Cursor is never answered', a
     'user/debug', 'running/debug', '-', '-', 'running/explore', '-', 'idle/explore', 'user/deep', '-', 'end',
   ])
   assert.ok(outputs.every((out) => out === ''), 'nothing is printed, so no hook is ever answered for Cursor')
-  checkPrivacy(m, [id, helper])
+  checkPrivacy(m, [id, helper], 'cursor')
   assert.deepEqual(allFiles(path.join(m.fm, 'sessions')), [])
   m.done()
 })
@@ -367,6 +387,22 @@ for (const [name, script] of Object.entries(HOOK)) {
     for (const handler of handlers) assert.match(JSON.stringify(handler), /scripts\/hook\.mjs/)
   })
 }
+
+await test('without curl, the fallback sends the same four fields under the same User-Agent', async () => {
+  const m = await machine()
+  // a PATH with nothing on it: the hook runs on node by its full path, and curl cannot be found
+  const empty = path.join(m.home, 'no-bin')
+  mkdirSync(empty)
+  const env = { ...m.env, PATH: empty }
+  const id = 'f00dfeed-0000-4000-8000-000000000001'
+  const { trace } = await play({ ...m, env }, HOOK.claude, [
+    claude(id, 'UserPromptSubmit', { prompt: `fix the refund test ${PRIVATE.words}` }),
+    claude(id, 'SessionEnd', { reason: 'other' }),
+  ])
+  assert.deepEqual(trace, ['user/debug', 'end'])
+  checkPrivacy(m, [id], 'claude')
+  m.done()
+})
 
 await test('the player is opened once, at the first session start after the key is made', async () => {
   const m = await machine()
@@ -438,6 +474,7 @@ for (const tool of ['codex', 'cursor']) {
     await run(path.join(m.fm, tool, 'hook.mjs'), args, input, env)
     await m.server.settle(1)
     assert.equal(JSON.parse(m.server.seen[0].body).agent, 'user')
+    assert.equal(m.server.seen[0].headers['user-agent'], userAgent(tool), 'the installed copy says which integration it is')
 
     const removed = await run(install, ['--dir', dir, '--uninstall'], '', env)
     assert.equal(removed.code, 0, removed.err)

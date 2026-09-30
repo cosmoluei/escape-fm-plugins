@@ -1,7 +1,7 @@
 {
   "name": "escape-fm",
   "displayName": "escape.fm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Background music that follows your work. Sends two tags per session (work mode, agent state) to escape.fm; never your prompts, code or file names.",
   "author": {
     "name": "Cosmo",

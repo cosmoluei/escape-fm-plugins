@@ -4,12 +4,19 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir, platform } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+// Not in shared/: each integration's copy is written from its manifest by scripts/sync-integrations.mjs.
+import { CLIENT, VERSION } from './client.mjs'
 
 export const API = (process.env.ESCAPE_FM_API ?? 'https://api.escape.fm').replace(/\/$/, '')
 export const PLAYER = (process.env.ESCAPE_FM_PLAYER ?? 'https://escape.fm').replace(/\/$/, '')
 /** Shared by every escape.fm integration on this machine, so they all reach the same player. */
 export const HOME = process.env.ESCAPE_FM_HOME ?? path.join(homedir(), '.escape-fm')
 const CONFIG = path.join(HOME, 'config.json')
+/**
+ * Every report says openly which integration sent it and which version, so the relay can
+ * count them apart (docs/analytics.md). Nothing about the machine or the listener is in it.
+ */
+export const USER_AGENT = `escape-fm/${VERSION} (${CLIENT})`
 
 export function readJson(file, fallback) {
   try {
@@ -87,7 +94,7 @@ export function post(config, body, timeout = 4) {
       try {
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${config.key}` },
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${config.key}`, 'user-agent': USER_AGENT },
           body: payload,
           signal: AbortSignal.timeout(timeout * 1000),
         })
@@ -102,6 +109,7 @@ export function post(config, body, timeout = 4) {
         `url = ${quote(url)}`,
         'request = "POST"',
         'header = "content-type: application/json"',
+        `user-agent = ${quote(USER_AGENT)}`,
         `header = ${quote(`authorization: Bearer ${config.key}`)}`,
         `data = ${quote(payload)}`,
         `max-time = ${timeout}`,

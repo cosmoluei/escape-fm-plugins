@@ -28,6 +28,13 @@ listener key as a bearer token, and nothing else:
 | `agent` | `user`, `running`, `waiting` or `idle` |
 | `ts` | When the event happened |
 
+Every report carries a `User-Agent` header, `escape-fm/<version> (<client>)` with the
+client `claude-code`, `codex` or `cursor`, so the relay can tell the integrations and
+their versions apart (docs/analytics.md). It is set once, in `shared/lib.mjs`, on both
+transports (curl and the `fetch` fallback), from a `client.mjs` that
+`scripts/sync-integrations.mjs` writes into each integration from its manifest's
+`version`. Nothing else about the machine goes in it.
+
 The key is in `~/.escape-fm/config.json` and is the same for every integration on the
 machine, so one player hears all of them as separate sessions.
 
@@ -41,10 +48,11 @@ shared/                 the code every integration runs, written once
   send.mjs              posts one report from a process of its own
   open.mjs              opens the player paired with this machine
   setup.mjs             adds hooks to an agent's hooks.json by hand
+                        (each integration also gets a client.mjs: its name and version, from its manifest)
 plugin/                 Claude Code (a Claude Code plugin, as before)
 integrations/codex/     Codex (a Codex plugin, and install.mjs)
 integrations/cursor/    Cursor (a Cursor plugin, and install.mjs)
-scripts/sync-integrations.mjs   copies shared/ into the three
+scripts/sync-integrations.mjs   copies shared/ into the three, and writes each one's client.mjs
 scripts/test-integrations.mjs   feeds each hook script its agent's events
 ```
 

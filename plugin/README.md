@@ -15,6 +15,16 @@ Per session, on hook events:
 | `agent` | `running` | `user`, `running`, `waiting` or `idle` |
 | `ts` | `1790765086341` | When the event happened |
 
+And one request header, the same on every report:
+
+| Header | Example | What it is |
+| --- | --- | --- |
+| `User-Agent` | `escape-fm/0.1.0 (claude-code)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
+
+From it the relay counts, once a day for each paired machine, that this integration
+reported and how many reports it sent, with the country Cloudflare places the request
+in (never the address). Those counts are all that is kept. How it is done is in [docs/analytics.md](../docs/analytics.md).
+
 Nothing else. Your prompt is read locally to choose the work mode
 ([`scripts/classify.mjs`](scripts/classify.mjs), a short keyword list you can read
 in a minute) and is never sent, stored or logged. Tool inputs, file names, paths
