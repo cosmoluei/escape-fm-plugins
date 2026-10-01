@@ -15,6 +15,9 @@ Per session, on hook events:
 | `agent` | `running` | `user`, `running`, `waiting` or `idle` |
 | `ts` | `1790765086341` | When the event happened |
 
+When the session ends, one last report says so: `session`, `ts` and `end: true`, so its
+state is removed at once rather than after half an hour.
+
 And one request header, the same on every report:
 
 | Header | Example | What it is |
@@ -58,6 +61,9 @@ claude plugin install escape-fm@escape-fm
 The first session after installing opens the player in your browser, already
 paired with this machine. Press play there. To open it again later, run
 `/escape-fm:open`.
+
+So that new versions arrive on their own, turn on auto-update for the marketplace:
+`/plugin` → Marketplaces → escape-fm → Enable auto-update.
 
 Requires Node 18 or later. Uses `curl` when present, so proxy settings from your
 environment are honoured.

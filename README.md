@@ -17,6 +17,9 @@ The first session after installing opens the player in your browser, already pai
 with your machine. Press play there. All three share one pairing key, so one player
 hears every agent on the machine.
 
+So that new versions arrive on their own, turn on auto-update for the marketplace: in
+Claude Code, `/plugin` → Marketplaces → escape-fm → Enable auto-update.
+
 ## What leaves your machine
 
 On hook events, for each session:
@@ -27,6 +30,9 @@ On hook events, for each session:
 | `mode` | `debug` | One of eight work modes |
 | `agent` | `running` | `user`, `running`, `waiting` or `idle` |
 | `ts` | `1790765086341` | When the event happened |
+
+When a session ends, one last report says so: `session`, `ts` and `end: true`, so its
+state is removed at once rather than after half an hour.
 
 Nothing else. Your prompt is read locally to choose the work mode
 ([`shared/classify.mjs`](shared/classify.mjs), a short keyword list) and is never

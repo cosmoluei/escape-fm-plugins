@@ -28,6 +28,13 @@ listener key as a bearer token, and nothing else:
 | `agent` | `user`, `running`, `waiting` or `idle` |
 | `ts` | When the event happened |
 
+When a session ends the last report is `session`, `ts` and `end: true` instead, and the
+relay removes the session at once. With none left open, the relay keeps when the last one
+ended and tells the account's players (docs/design.md, "The end of the day"). An
+integration that never reports an end (an older version, a machine that went to sleep,
+Cursor's cloud agents) still works: its session ages out after 30 minutes, and the relay
+counts the work as stopped when it was last heard from.
+
 Every report carries a `User-Agent` header, `escape-fm/<version> (<client>)` with the
 client `claude-code`, `codex` or `cursor`, so the relay can tell the integrations and
 their versions apart (docs/analytics.md). It is set once, in `shared/lib.mjs`, on both
@@ -37,6 +44,15 @@ transports (curl and the `fetch` fallback), from a `client.mjs` that
 
 The key is in `~/.escape-fm/config.json` and is the same for every integration on the
 machine, so one player hears all of them as separate sessions.
+
+## Installing and updating
+
+How each is installed is in `release/plugins/README.md` (published as the public
+repository's README) and each integration's own README. Existing installs only update when
+the `version` in a plugin's manifest goes up, and Claude Code only fetches a new version by
+itself when auto-update is on for the marketplace, so the install instructions ask for it:
+`/plugin` → Marketplaces → escape-fm → Enable auto-update. A machine still on an older
+version keeps working; the relay accepts every report any released version has sent.
 
 ## Layout
 
