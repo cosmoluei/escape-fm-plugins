@@ -1,9 +1,9 @@
 {
   "name": "escape-fm",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Background music that follows your work. Sends two tags per session (work mode, agent state) to escape.fm; never your prompts, code or file names.",
   "author": {
-    "name": "Cosmo",
+    "name": "ILLUSION Tech Limited",
     "email": "hello@escape.fm",
     "url": "https://escape.fm"
   },
@@ -17,7 +17,7 @@
   "interface": {
     "displayName": "escape.fm",
     "shortDescription": "Background music that follows your work.",
-    "developerName": "Cosmo",
+    "developerName": "ILLUSION Tech Limited",
     "category": "Productivity",
     "websiteURL": "https://escape.fm"
   },
