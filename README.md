@@ -9,8 +9,8 @@ and nothing about your work.
 
 | Agent | Folder | Install |
 | --- | --- | --- |
-| Claude Code | [`plugin/`](plugin/README.md) | `claude plugin marketplace add cosmoluei/escape-fm-plugins` then `claude plugin install escape-fm@escape-fm` |
-| Codex | [`integrations/codex/`](integrations/codex/README.md) | `codex plugin marketplace add cosmoluei/escape-fm-plugins` then `codex plugin add escape-fm@escape-fm`, and trust the hooks in `/hooks` |
+| Claude Code | [`plugin/`](plugin/README.md) | `claude plugin marketplace add escape-fm/plugins` then `claude plugin install escape-fm@escape-fm` |
+| Codex | [`integrations/codex/`](integrations/codex/README.md) | `codex plugin marketplace add escape-fm/plugins` then `codex plugin add escape-fm@escape-fm`, and trust the hooks in `/hooks` |
 | Cursor | [`integrations/cursor/`](integrations/cursor/README.md) | Clone this repository and run `node integrations/cursor/install.mjs` (a listing in Cursor's marketplace is on its way) |
 
 The first session after installing opens the player in your browser, already paired

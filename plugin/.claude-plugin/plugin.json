@@ -1,7 +1,7 @@
 {
   "name": "escape-fm",
   "displayName": "escape.fm",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Background music that follows your work. Sends two tags per session (work mode, agent state) to escape.fm; never your prompts, code or file names.",
   "author": {
     "name": "ILLUSION Tech Limited",
@@ -16,6 +16,6 @@
     "background-music",
     "productivity"
   ],
-  "repository": "https://github.com/cosmoluei/escape-fm-plugins",
+  "repository": "https://github.com/escape-fm/plugins",
   "license": "MIT"
 }
