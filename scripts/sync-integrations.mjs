@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const SHARED = 'shared'
 /** What a hook script runs on. */
-const RUNTIME = ['classify.mjs', 'lib.mjs', 'session.mjs', 'send.mjs', 'open.mjs']
+const RUNTIME = ['classify.mjs', 'lib.mjs', 'computer.mjs', 'session.mjs', 'send.mjs', 'open.mjs']
 /** What install.mjs runs on, for the agents that can be set up by hand. */
 const SETUP = ['setup.mjs']
 
@@ -46,7 +46,7 @@ function clientOf({ client, manifest }) {
   const { version } = JSON.parse(readFileSync(path.join(ROOT, manifest), 'utf8'))
   return [
     `// Written by scripts/sync-integrations.mjs from ${manifest}. Change the version there.`,
-    '// lib.mjs sends these two as the User-Agent of every report, and nothing else about this machine.',
+    '// lib.mjs sends these two as the User-Agent of every report; the only other thing about this machine sent is its name (computer.mjs).',
     `export const CLIENT = '${client}'`,
     `export const VERSION = '${version}'`,
     '',

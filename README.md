@@ -30,6 +30,7 @@ On hook events, for each session:
 | `mode` | `debug` | One of eight work modes |
 | `agent` | `running` | `user`, `running`, `waiting` or `idle` |
 | `ts` | `1790765086341` | When the event happened |
+| `computer` | `Ada's MacBook Pro` | This computer's name as you see it in your system settings (macOS: Computer Name; Windows and Linux: the host name), so your page can list it by name. Set `ESCAPE_FM_COMPUTER_NAME` to change it, or to an empty value to send none |
 
 When a session ends, one last report says so: `session`, `ts` and `end: true`, so its
 state is removed at once rather than after half an hour.
@@ -65,6 +66,7 @@ writes the copies, and the test fails if one has drifted.
 | `ESCAPE_FM_DISABLE=1` | Send nothing |
 | `ESCAPE_FM_NO_OPEN=1` | Never open a browser |
 | `ESCAPE_FM_HOME` | Keep the key and session state somewhere other than `~/.escape-fm` |
+| `ESCAPE_FM_COMPUTER_NAME` | The name sent as `computer` in place of this computer's own; set to nothing (`ESCAPE_FM_COMPUTER_NAME=`), no name is sent |
 
 ## About this repository
 

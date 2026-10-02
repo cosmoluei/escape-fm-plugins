@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Feeds each integration's hook script the events its agent sends, in the shape that
-// agent documents, and checks what reaches the relay: the four fields and nothing else,
-// under a User-Agent that names the integration and its version and nothing more.
+// agent documents, and checks what reaches the relay: the four fields, the computer's
+// name, and nothing else, under a User-Agent that names the integration and its version
+// and nothing more.
 // The relay here is a stand-in that only records requests; nothing leaves the machine
 // and nothing outside a temporary folder is touched.
 //
@@ -152,7 +153,7 @@ function checkKept(m) {
 }
 
 /**
- * The promise, checked: exactly four fields go out, under the key, and nothing private is sent.
+ * The promise, checked: exactly four fields go out, and the computer's name, under the key, and nothing private is sent.
  * The one header that says anything beyond that names the integration and its version, openly.
  */
 function checkPrivacy(m, ids, tool) {
@@ -171,7 +172,14 @@ function checkPrivacy(m, ids, tool) {
     assert.deepEqual(extra, [], `headers sent: ${Object.keys(request.headers).join(', ')}`)
     const body = JSON.parse(request.body)
     const fields = Object.keys(body).sort().join(',')
-    assert.ok(fields === 'agent,mode,session,ts' || fields === 'end,session,ts', `fields posted: ${fields}`)
+    assert.ok(
+      fields === 'agent,computer,mode,session,ts' || fields === 'agent,mode,session,ts' || fields === 'end,session,ts',
+      `fields posted: ${fields}`,
+    )
+    if ('computer' in body) {
+      assert.equal(typeof body.computer, 'string')
+      assert.ok(body.computer.length > 0 && [...body.computer].length <= 40, `computer: ${body.computer}`)
+    }
     assert.match(body.session, /^[A-Za-z0-9_-]{16}$/)
     assert.ok(Math.abs(body.ts - Date.now()) < 60_000, 'ts is now')
     if (!body.end) {
@@ -402,6 +410,83 @@ await test('without curl, the fallback sends the same four fields under the same
   assert.deepEqual(trace, ['user/debug', 'end'])
   checkPrivacy(m, [id], 'claude')
   m.done()
+})
+
+// ------------------------------------------------------------ the computer's name
+
+await test("ESCAPE_FM_COMPUTER_NAME is the name every report but the last carries", async () => {
+  const m = await machine()
+  const env = { ...m.env, ESCAPE_FM_COMPUTER_NAME: "  Ada's\u200b MacBook\tPro  " }
+  const id = 'feedface-0000-4000-8000-000000000002'
+  const { trace } = await play({ ...m, env }, HOOK.cursor, [
+    cursor('beforeSubmitPrompt', id, { prompt: 'fix the bug' }),
+    cursorTool('preToolUse', id, 'Shell'),
+    cursor('sessionEnd', id, { session_id: id, reason: 'completed' }),
+  ])
+  assert.deepEqual(trace, ['user/debug', 'running/debug', 'end'])
+  const bodies = m.server.seen.map((request) => JSON.parse(request.body))
+  assert.deepEqual(bodies.map((body) => body.computer), ["Ada's MacBook Pro", "Ada's MacBook Pro", undefined])
+  checkPrivacy(m, [id], 'cursor')
+  assert.ok(!existsSync(path.join(m.fm, 'computer.json')), 'a name given is not looked up, or kept')
+  m.done()
+})
+
+await test('ESCAPE_FM_COMPUTER_NAME set to nothing sends no name', async () => {
+  const m = await machine()
+  const env = { ...m.env, ESCAPE_FM_COMPUTER_NAME: '' }
+  await play({ ...m, env }, HOOK.claude, [claude('s-1', 'UserPromptSubmit', { prompt: 'fix the bug' })])
+  assert.equal(Object.keys(JSON.parse(m.server.seen[0].body)).sort().join(','), 'agent,mode,session,ts')
+  checkPrivacy(m, [], 'claude')
+  m.done()
+})
+
+await test("the computer's name is looked up once a day and kept in a file of its own", async () => {
+  const m = await machine()
+  mkdirSync(m.fm, { recursive: true })
+  const cache = path.join(m.fm, 'computer.json')
+  writeFileSync(cache, JSON.stringify({ name: 'Kept Name', at: Date.now() - 60_000 }) + '\n')
+  await play(m, HOOK.codex, [codex('s-1', 'UserPromptSubmit', { prompt: 'fix the bug' })])
+  assert.equal(JSON.parse(m.server.seen[0].body).computer, 'Kept Name', 'a name looked up today is used as it is')
+  // a day old: asked again, and whatever the system says now is kept with the time
+  writeFileSync(cache, JSON.stringify({ name: 'Kept Name', at: Date.now() - 25 * 60 * 60 * 1000 }) + '\n')
+  await play(m, HOOK.codex, [codex('s-1', 'UserPromptSubmit', { prompt: 'and the other one' })])
+  const kept = JSON.parse(readFileSync(cache, 'utf8'))
+  assert.ok(Date.now() - kept.at < 60_000, 'looked up again')
+  assert.ok(kept.name === null || (typeof kept.name === 'string' && kept.name !== 'Kept Name'))
+  assert.equal(JSON.parse(m.server.seen[1].body).computer, kept.name ?? undefined)
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(path.join(m.fm, 'config.json'), 'utf8'))), ['key', 'unopened'], 'nothing of it in config.json')
+  checkPrivacy(m, [], 'codex')
+  m.done()
+})
+
+await test('a host name is made readable, and one that says nothing is not sent', async () => {
+  // the copy, not shared/: lib.mjs, which it needs, imports the client.mjs only the copies have
+  const { prettify, clean } = await import(path.join(ROOT, 'plugin/scripts/computer.mjs'))
+  const cases = {
+    'DESKTOP-AB12CD': 'Desktop AB12CD',
+    'ada-thinkpad': 'Ada Thinkpad',
+    'ada-thinkpad.local': 'Ada Thinkpad',
+    'ADA_PC.lan': 'Ada PC',
+    'Adas-MacBook-Pro.local': 'Adas MacBook Pro',
+    'build box': 'Build Box',
+    localhost: null,
+    'LOCALHOST.localdomain': null,
+    'ip-172-31-5-10': null,
+    'ip-172-31-5-10.ec2.internal': null,
+    '10.0.0.5': null,
+    'fe80::1': null,
+    '3f4a9c2b1d7e': null,
+    '0b8d1c3e-6f2a-4d5b-9c7e-1a2b3c4d5e6f': null,
+    '1234': null,
+    '': null,
+    '   ': null,
+  }
+  for (const [host, want] of Object.entries(cases)) assert.equal(prettify(host), want, host)
+  assert.equal(prettify(undefined), null)
+  assert.equal(prettify('a'.repeat(60)), 'A' + 'a'.repeat(39))
+  assert.equal(clean(' Ada\u0000\u202e  Mac\n'), 'Ada Mac')
+  assert.equal(clean('\u200b'), null)
+  assert.equal([...clean('🎧'.repeat(50))].length, 40)
 })
 
 await test('the player is opened once, at the first session start after the key is made', async () => {

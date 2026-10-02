@@ -27,6 +27,7 @@ listener key as a bearer token, and nothing else:
 | `mode` | One of eight work modes, chosen locally from the prompt |
 | `agent` | `user`, `running`, `waiting` or `idle` |
 | `ts` | When the event happened |
+| `computer` | This computer's name as its owner sees it in the system settings, so the account's page can list the machine by name (below). Left out when there is none |
 
 When a session ends the last report is `session`, `ts` and `end: true` instead, and the
 relay removes the session at once. With none left open, the relay keeps when the last one
@@ -45,6 +46,33 @@ transports (curl and the `fetch` fallback), from a `client.mjs` that
 The key is in `~/.escape-fm/config.json` and is the same for every integration on the
 machine, so one player hears all of them as separate sessions.
 
+### The computer's name
+
+`computer` is the one thing about the machine a report carries, and only the name its
+owner gave it, worked out by `shared/computer.mjs`:
+
+- macOS: the Computer Name (`scutil --get ComputerName`, System Settings → General →
+  Sharing), as typed, `Ada’s MacBook Pro`. If that fails, the host name as below.
+- Linux: `PRETTY_HOSTNAME` from `/etc/machine-info` when it is set, otherwise the host name.
+- Windows: the host name.
+
+A host name is made readable: the domain after the first dot goes (`.local`, `.lan`),
+`-`, `_` and spaces split words, a word all in lower case or (three letters or more) all
+in upper case is capitalised, and anything else is kept as it is: `ada-thinkpad` is
+`Ada Thinkpad`, `DESKTOP-AB12CD` is `Desktop AB12CD`, `ADA-PC` is `Ada PC`. A host name
+that says nothing sends no name: `localhost`, an address (`10.0.0.5`, `ip-172-31-5-10`),
+or a long hex or UUID-like id, as containers and cloud machines have. The name is trimmed,
+loses control and invisible characters, and is cut at 40 characters (code points).
+
+`ESCAPE_FM_COMPUTER_NAME` replaces it; set to nothing, no name is sent at all. Hooks run
+often, so the name is looked up once a day and kept in `~/.escape-fm/computer.json`
+(`{ name, at }`), a file of its own: `config.json` is rewritten by whichever hook gets
+there first. The last report of a session, the `end`, carries no name.
+
+The relay cleans the name again (`cleanName` in `api/src/names.ts`) and reads it apart
+from the four tags, which keep dropping everything else. It becomes the device's label
+once the key is claimed, and a new one renames it (docs/accounts.md, "`label`").
+
 ## Installing and updating
 
 How each is installed is in `release/plugins/README.md` (published as the public
@@ -60,6 +88,7 @@ version keeps working; the relay accepts every report any released version has s
 shared/                 the code every integration runs, written once
   classify.mjs          prompt -> work mode
   lib.mjs               the key, the transport, opening the player
+  computer.mjs          this computer's name, kept a day in ~/.escape-fm/computer.json
   session.mjs           a session's two tags between hook runs; what to report and when
   send.mjs              posts one report from a process of its own
   open.mjs              opens the player paired with this machine

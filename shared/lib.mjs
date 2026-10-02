@@ -14,7 +14,8 @@ export const HOME = process.env.ESCAPE_FM_HOME ?? path.join(homedir(), '.escape-
 const CONFIG = path.join(HOME, 'config.json')
 /**
  * Every report says openly which integration sent it and which version, so the relay can
- * count them apart (docs/analytics.md). Nothing about the machine or the listener is in it.
+ * count them apart (docs/analytics.md). Nothing about the machine or the listener is in it;
+ * the one thing about the machine a report carries is its name, in the body (computer.mjs).
  */
 export const USER_AGENT = `escape-fm/${VERSION} (${CLIENT})`
 

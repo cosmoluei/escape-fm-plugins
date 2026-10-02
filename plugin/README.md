@@ -14,6 +14,7 @@ Per session, on hook events:
 | `mode` | `debug` | One of eight work modes |
 | `agent` | `running` | `user`, `running`, `waiting` or `idle` |
 | `ts` | `1790765086341` | When the event happened |
+| `computer` | `Ada's MacBook Pro` | This computer's name as you see it in your system settings (macOS: Computer Name; Windows and Linux: the host name), so your page can list it by name. Set `ESCAPE_FM_COMPUTER_NAME` to change it, or to an empty value to send none |
 
 When the session ends, one last report says so: `session`, `ts` and `end: true`, so its
 state is removed at once rather than after half an hour.
@@ -22,7 +23,7 @@ And one request header, the same on every report:
 
 | Header | Example | What it is |
 | --- | --- | --- |
-| `User-Agent` | `escape-fm/0.1.0 (claude-code)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
+| `User-Agent` | `escape-fm/0.3.0 (claude-code)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
 
 From it the relay counts, once a day for each paired machine, that this integration
 reported and how many reports it sent, with the country Cloudflare places the request
@@ -86,4 +87,5 @@ them all.
 | `ESCAPE_FM_DISABLE=1` | Send nothing |
 | `ESCAPE_FM_NO_OPEN=1` | Never open a browser |
 | `ESCAPE_FM_HOME` | Keep the key and session state somewhere other than `~/.escape-fm` |
+| `ESCAPE_FM_COMPUTER_NAME` | The name sent as `computer` in place of this computer's own; set to nothing (`ESCAPE_FM_COMPUTER_NAME=`), no name is sent |
 | `ESCAPE_FM_API`, `ESCAPE_FM_PLAYER` | Point at another relay or player, for development |

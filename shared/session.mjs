@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { classify, fromTools } from './classify.mjs'
+import { computerName } from './computer.mjs'
 import { HOME, headless, loadConfig, openBrowser, pairingUrl, post, postDetached, readJson, welcomed, writeJson } from './lib.mjs'
 
 /** While nothing changes, a running agent still says so this often, so the relay knows it is alive. */
@@ -102,7 +103,9 @@ export async function report(step, manner = {}) {
   writeJson(stateFile, state)
   if (!due) return null
 
-  const reply = await send({ session, mode: state.mode, agent: state.agent, ts: started })
+  // the machine's name too, so the listener's page can say which computer this is (computer.mjs)
+  const computer = computerName()
+  const reply = await send({ session, mode: state.mode, agent: state.agent, ts: started, ...(computer ? { computer } : {}) })
   if (step.kind !== 'start') return null
   return greet(config, manner.detach ? null : reply !== null)
 }
