@@ -12,6 +12,9 @@
     "PostToolUse": [
       { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs"], "async": true }] }
     ],
+    "PostToolUseFailure": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs"], "async": true }] }
+    ],
     "PermissionRequest": [
       { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs"], "async": true }] }
     ],

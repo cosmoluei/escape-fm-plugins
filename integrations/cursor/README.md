@@ -15,12 +15,13 @@ Per conversation, on hook events:
 | `agent` | `running` | `user`, `running`, `waiting` or `idle` |
 | `ts` | `1790765086341` | When the event happened |
 | `computer` | `Ada's MacBook Pro` | This computer's name as you see it in your system settings (macOS: Computer Name; Windows and Linux: the host name), so your page can list it by name. Set `ESCAPE_FM_COMPUTER_NAME` to change it, or to an empty value to send none |
+| `outcomes` | `[true, false]` | Whether each of the agent's steps since the last report succeeded or failed, oldest first: a command, an edit or an MCP tool, from whether Cursor reports it as failed (`postToolUseFailure`). Never what the step was. Left out when there are none |
 
 And one request header, the same on every report:
 
 | Header | Example | What it is |
 | --- | --- | --- |
-| `User-Agent` | `escape-fm/0.3.0 (cursor)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
+| `User-Agent` | `escape-fm/0.4.0 (cursor)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
 
 From it the relay counts, once a day for each paired machine, that this integration
 reported and how many reports it sent, with the country Cloudflare places the request
@@ -29,7 +30,9 @@ in (never the address). Those counts are all that is kept. How it is done is in 
 Nothing else. Your prompt is read locally to choose the work mode
 ([`scripts/classify.mjs`](scripts/classify.mjs), a short keyword list you can read
 in a minute) and is never sent, stored or logged. Tool inputs, commands, file names,
-paths and outputs are not read at all; only tool names are, and they stay local.
+paths, outputs and error messages are not read at all; only tool names are, and they
+stay local. Whether a step failed is told by which event Cursor runs, and whether it
+was denied by its failure type, not by anything the tool returned.
 Cursor also hands every hook your account's email address, the workspace folders and
 the transcript's path; none of them is looked at.
 
@@ -44,6 +47,15 @@ change anything the agent does.
 | A tool starts, finishes or fails (`preToolUse`, `postToolUse`, `postToolUseFailure`) | `running` |
 | The agent stops, or you stop it (`stop`) | `idle` |
 | The conversation ends (`sessionEnd`) | the session is removed |
+
+| Cursor event | Outcome |
+| --- | --- |
+| A command, an edit or an MCP tool finishes (`postToolUse`) | `true` |
+| It fails or times out (`postToolUseFailure`) | `false` |
+| Reading, searching, asking you, a tool you stopped or did not allow | none |
+
+Whether a shell command that exits with an error counts as a failure in Cursor's
+events is not documented.
 
 The work mode comes from keywords in your message. A message with no hint
 ("continue", "ok") keeps the mode the conversation already had; if there was none,
@@ -113,8 +125,8 @@ installed.
 ## Pairing
 
 On first use the integration creates a random listener key in
-`~/.escape-fm/config.json`. The same key is used by escape.fm for Claude Code and for
-Codex on this machine, so one player hears them all. The player receives it through
+`~/.escape-fm/config.json`. The same key is used by escape.fm for every other agent
+on this machine, so one player hears them all. The player receives it through
 the URL fragment, which browsers never send to a server, and keeps it in local
 storage. Anyone holding the key can see these tags, so treat the pairing link as
 private. Delete `~/.escape-fm/config.json` to reset.

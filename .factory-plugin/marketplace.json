@@ -1,0 +1,15 @@
+{
+  "name": "escape-fm",
+  "description": "Plugins for escape.fm, background music that follows your work.",
+  "owner": {
+    "name": "ILLUSION Tech Limited",
+    "email": "hello@escape.fm"
+  },
+  "plugins": [
+    {
+      "name": "escape-fm",
+      "description": "Background music that follows your work in Droid.",
+      "source": "./integrations/droid"
+    }
+  ]
+}

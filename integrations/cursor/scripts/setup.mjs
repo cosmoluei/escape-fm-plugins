@@ -1,7 +1,7 @@
 // A copy of shared/setup.mjs, written by scripts/sync-integrations.mjs. Edit it there.
 // Installs an integration by hand, for an agent that is not given it as a plugin:
 // copies the integration's scripts to a folder of their own under ~/.escape-fm and
-// adds its hooks to the agent's hooks.json, beside whatever is there already.
+// adds its hooks to the agent's configuration file, beside whatever is there already.
 // Uninstalling takes out exactly what was added. Used by each integration's install.mjs.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -9,8 +9,11 @@ import path from 'node:path'
 import { HOME } from './lib.mjs'
 import { greet, welcome } from './session.mjs'
 
-/** How an integration's own hooks.json names its hook script: from a plugin's root, quoted or not. */
-const PLACE = /"?(?:\$\{PLUGIN_ROOT\}|\.)\/scripts\/hook\.mjs"?/
+/**
+ * How an integration's own hooks.json names its hook script: from a plugin's or an extension's root
+ * (`${PLUGIN_ROOT}`, `${extensionPath}`, …, or `./`), quoted or not.
+ */
+const PLACE = /"?(?:\$\{[A-Za-z_]+\}|\.)\/scripts\/hook\.mjs"?/
 
 /** The value that follows a flag on the command line. */
 export function option(name) {
@@ -18,7 +21,7 @@ export function option(name) {
   return at > 0 ? process.argv[at + 1] : undefined
 }
 
-/** Both shapes of hooks.json: handlers listed directly under an event (Cursor), or in groups with a matcher (Codex). */
+/** Both shapes of hooks.json: handlers listed directly under an event (Cursor, Copilot), or in groups with a matcher (Codex and most). */
 const mapHandlers = (list, change) =>
   list.flatMap((item) => {
     if (!Array.isArray(item?.hooks)) return change(item)
@@ -30,6 +33,11 @@ const mapHandlers = (list, change) =>
 function without(hooks, script) {
   const kept = {}
   for (const [event, list] of Object.entries(hooks ?? {})) {
+    // not a list of hooks: something of the agent's own, left as it is
+    if (!Array.isArray(list)) {
+      kept[event] = list
+      continue
+    }
     const rest = mapHandlers(list, (handler) => (typeof handler?.command === 'string' && handler.command.includes(script) ? [] : [handler]))
     if (rest.length) kept[event] = rest
   }
@@ -52,21 +60,31 @@ function readHooks(file, blank) {
  * @param {string} options.tool the folder under ~/.escape-fm for the scripts: 'codex', 'cursor'
  * @param {string} options.agent the agent's name, for what is printed
  * @param {string} options.root the integration's folder, holding hooks/hooks.json and scripts/
- * @param {string} options.dir the agent's configuration folder, holding its hooks.json
+ * @param {string} options.dir the agent's configuration folder, holding the file below
+ * @param {string} [options.file] the file in it that holds the hooks: hooks.json, or the agent's settings.json
+ * @param {boolean} [options.wrapped] the events are under `hooks` in that file; false: the file is the events themselves (Droid)
+ * @param {boolean} [options.own] the file is this integration's alone (a folder of hook files, as Copilot's): uninstalling removes it
  * @param {boolean} [options.create] make that folder if it is not there (a project's, not the agent's own)
- * @param {object} options.blank a hooks.json with nothing in it, as this agent wants it
+ * @param {object} options.blank the file with nothing in it, as this agent wants it
  * @param {string[]} [options.after] what is left for the listener to do in the agent
  */
-export function setup({ tool, agent, root, dir, create = false, blank, after = [] }) {
+export function setup({ tool, agent, root, dir, file: name = 'hooks.json', wrapped = true, own = false, create = false, blank, after = [] }) {
   const dest = path.join(HOME, tool)
   const script = path.join(dest, 'hook.mjs')
-  const file = path.join(dir, 'hooks.json')
+  const file = path.join(dir, name)
+  // the events in a file, and a file with these events, in this agent's shape
+  const eventsOf = (config) => (wrapped ? config.hooks : config)
+  const withEvents = (config, hooks) => (wrapped ? { ...blank, ...config, hooks } : hooks)
 
   try {
     if (process.argv.includes('--uninstall')) {
-      if (existsSync(file)) {
+      if (existsSync(file) && own) {
+        rmSync(file)
+        console.log(`Removed ${file}.`)
+      } else if (existsSync(file)) {
         const config = readHooks(file, blank)
-        writeFileSync(file, JSON.stringify({ ...config, hooks: without(config.hooks, script) }, null, 2) + '\n')
+        const kept = without(eventsOf(config), script)
+        writeFileSync(file, JSON.stringify(wrapped ? { ...config, hooks: kept } : kept, null, 2) + '\n')
         console.log(`Took the escape.fm hooks out of ${file}.`)
       }
       rmSync(dest, { recursive: true, force: true })
@@ -74,7 +92,9 @@ export function setup({ tool, agent, root, dir, create = false, blank, after = [
       return
     }
 
-    const template = JSON.parse(readFileSync(path.join(root, 'hooks', 'hooks.json'), 'utf8')).hooks
+    // the integration's own hooks.json, with its events under `hooks` or (Droid's) the events themselves
+    const shipped = JSON.parse(readFileSync(path.join(root, 'hooks', 'hooks.json'), 'utf8'))
+    const template = shipped.hooks && typeof shipped.hooks === 'object' && !Array.isArray(shipped.hooks) ? shipped.hooks : shipped
     const ours = {}
     for (const [event, list] of Object.entries(template)) {
       ours[event] = mapHandlers(list, (handler) => [{ ...handler, command: handler.command.replace(PLACE, () => `"${script}"`) }])
@@ -92,10 +112,10 @@ export function setup({ tool, agent, root, dir, create = false, blank, after = [
     }
     console.log(`Copied the hook scripts to ${dest}.`)
 
-    const kept = without(config.hooks, script)
+    const kept = without(eventsOf(config), script)
     const hooks = { ...kept }
     for (const [event, list] of Object.entries(ours)) hooks[event] = [...(kept[event] ?? []), ...list]
-    const merged = JSON.stringify({ ...blank, ...config, hooks }, null, 2) + '\n'
+    const merged = JSON.stringify(withEvents(config, hooks), null, 2) + '\n'
 
     if (print) {
       console.log(`Add these to ${file}:\n\n${merged}`)

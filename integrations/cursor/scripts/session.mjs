@@ -1,8 +1,8 @@
 // A copy of shared/session.mjs, written by scripts/sync-integrations.mjs. Edit it there.
 // What every integration has in common: a session's two tags, kept between hook
-// runs and reported when they change. Each agent's hook script turns that agent's
-// own events into the steps below; nothing else of an event is passed in here, so
-// nothing else can leave.
+// runs and reported when they change, and whether the agent's steps went through.
+// Each agent's hook script turns that agent's own events into the steps below;
+// nothing else of an event is passed in here, so nothing else can leave.
 
 import { createHash } from 'node:crypto'
 import { existsSync, rmSync } from 'node:fs'
@@ -14,6 +14,8 @@ import { HOME, headless, loadConfig, openBrowser, pairingUrl, post, postDetached
 /** While nothing changes, a running agent still says so this often, so the relay knows it is alive. */
 const HEARTBEAT = 45_000
 const TOOL_WINDOW = 24
+/** Outcomes held for the next report; the relay takes no more than this from one. */
+const OUTCOMES = 32
 
 const started = Date.now()
 
@@ -25,9 +27,14 @@ const started = Date.now()
  *   start: the session began. prompt: the listener sent a message. tool: a tool is starting.
  *   running: the agent is at work again. waiting: it is asking the listener something.
  *   stop: it has finished its turn. end: the session is over.
+ *   A tool finishing is `running` (the agent is at work again), with `ok` when the agent says whether it went through,
+ *   and with `tool` too from an agent whose hooks are not told when a tool starts.
  * @property {string} [prompt] with 'prompt': read here to choose the work mode, and not sent anywhere
  * @property {boolean} [planning] with 'prompt': the agent is in its plan mode
- * @property {'edit' | 'read' | 'ask' | 'other'} [tool] with 'tool': what kind of tool it is
+ * @property {'edit' | 'read' | 'ask' | 'other'} [tool] with 'tool', or 'running' for a tool that has finished: what kind of tool it is
+ * @property {boolean} [ok] with 'running', when a step of the agent's has just finished: whether it went through.
+ *   Only this yes or no is kept and reported, never what the step was or what it said; reading and asking are
+ *   not steps here, so a hook script leaves `ok` out for them.
  */
 
 /**
@@ -54,7 +61,7 @@ export async function report(step, manner = {}) {
 
   const config = loadConfig()
   const send = (body) => (manner.detach ? (postDetached(body), null) : post(config, body))
-  const state = readJson(stateFile, { mode: null, agent: 'idle', tools: [], sent: null })
+  const state = readJson(stateFile, { mode: null, agent: 'idle', tools: [], outcomes: [], sent: null })
 
   if (step.kind === 'end') {
     rmSync(stateFile, { force: true })
@@ -86,6 +93,12 @@ export async function report(step, manner = {}) {
       break
     case 'running':
       state.agent = 'running'
+      if (step.tool) {
+        state.tools = [...state.tools, String(step.tool)].slice(-TOOL_WINDOW)
+        if (!state.hinted) state.mode = fromTools(state.tools) ?? state.mode
+      }
+      // kept until the next report goes, which carries them; they do not make one go sooner
+      if (typeof step.ok === 'boolean') state.outcomes = [...(state.outcomes ?? []), step.ok].slice(-OUTCOMES)
       break
     case 'waiting':
       state.agent = 'waiting'
@@ -100,13 +113,24 @@ export async function report(step, manner = {}) {
 
   const sent = state.sent
   const due = force || !sent || sent.agent !== state.agent || sent.mode !== state.mode || started - sent.at > HEARTBEAT
-  if (due) state.sent = { agent: state.agent, mode: state.mode, at: started }
+  const outcomes = due ? (state.outcomes ?? []) : []
+  if (due) {
+    state.sent = { agent: state.agent, mode: state.mode, at: started }
+    state.outcomes = []
+  }
   writeJson(stateFile, state)
   if (!due) return null
 
   // the machine's name too, so the listener's page can say which computer this is (computer.mjs)
   const computer = computerName()
-  const reply = await send({ session, mode: state.mode, agent: state.agent, ts: started, ...(computer ? { computer } : {}) })
+  const reply = await send({
+    session,
+    mode: state.mode,
+    agent: state.agent,
+    ts: started,
+    ...(outcomes.length ? { outcomes } : {}),
+    ...(computer ? { computer } : {}),
+  })
   if (step.kind !== 'start') return null
   return greet(config, manner.detach ? null : reply !== null)
 }

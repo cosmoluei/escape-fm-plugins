@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\" sessionStart", "timeoutSec": 5 }],
+    "userPromptSubmitted": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\" userPromptSubmitted", "timeoutSec": 5 }],
+    "postToolUse": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\" postToolUse", "timeoutSec": 5 }],
+    "postToolUseFailure": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\" postToolUseFailure", "timeoutSec": 5 }],
+    "notification": [
+      { "type": "command", "matcher": "permission_prompt|elicitation_dialog", "command": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\" notification", "timeoutSec": 5 }
+    ],
+    "agentStop": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\" agentStop", "timeoutSec": 5 }],
+    "sessionEnd": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\" sessionEnd", "timeoutSec": 5 }]
+  }
+}

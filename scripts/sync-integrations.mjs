@@ -29,6 +29,10 @@ const TARGETS = {
   'plugin/scripts': { files: RUNTIME, client: 'claude-code', manifest: 'plugin/.claude-plugin/plugin.json' },
   'integrations/codex/scripts': { files: [...RUNTIME, ...SETUP], client: 'codex', manifest: 'integrations/codex/.codex-plugin/plugin.json' },
   'integrations/cursor/scripts': { files: [...RUNTIME, ...SETUP], client: 'cursor', manifest: 'integrations/cursor/.cursor-plugin/plugin.json' },
+  'integrations/qwen/scripts': { files: [...RUNTIME, ...SETUP], client: 'qwen-code', manifest: 'integrations/qwen/qwen-extension.json' },
+  'integrations/gemini/scripts': { files: [...RUNTIME, ...SETUP], client: 'gemini-cli', manifest: 'integrations/gemini/gemini-extension.json' },
+  'integrations/copilot/scripts': { files: [...RUNTIME, ...SETUP], client: 'copilot-cli', manifest: 'integrations/copilot/plugin.json' },
+  'integrations/droid/scripts': { files: [...RUNTIME, ...SETUP], client: 'droid', manifest: 'integrations/droid/.factory-plugin/plugin.json' },
 }
 
 const banner = (name) => `// A copy of ${SHARED}/${name}, written by scripts/sync-integrations.mjs. Edit it there.\n`

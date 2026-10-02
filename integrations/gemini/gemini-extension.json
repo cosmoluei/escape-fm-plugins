@@ -1,0 +1,5 @@
+{
+  "name": "escape-fm",
+  "version": "0.4.0",
+  "description": "Background music that follows your work. Sends two tags per session (work mode, agent state), and whether the agent's steps succeed, to escape.fm; never your prompts, code or file names."
+}

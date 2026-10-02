@@ -1,8 +1,8 @@
 # escape.fm for Claude Code
 
 Background music that follows your work. While Claude Code runs, this plugin tells
-the [escape.fm](https://escape.fm) player two things about each session, and the
-player picks and shapes the music from them.
+the [escape.fm](https://escape.fm) player two things about each session, and whether
+Claude's steps are going through, and the player picks and shapes the music from them.
 
 ## What leaves your machine
 
@@ -15,6 +15,7 @@ Per session, on hook events:
 | `agent` | `running` | `user`, `running`, `waiting` or `idle` |
 | `ts` | `1790765086341` | When the event happened |
 | `computer` | `Ada's MacBook Pro` | This computer's name as you see it in your system settings (macOS: Computer Name; Windows and Linux: the host name), so your page can list it by name. Set `ESCAPE_FM_COMPUTER_NAME` to change it, or to an empty value to send none |
+| `outcomes` | `[true, false]` | Whether each of the agent's steps since the last report succeeded or failed, oldest first: a command, an edit or an MCP tool, from whether Claude Code reports it as failed (`PostToolUseFailure`). Never what the step was. Left out when there are none |
 
 When the session ends, one last report says so: `session`, `ts` and `end: true`, so its
 state is removed at once rather than after half an hour.
@@ -23,7 +24,7 @@ And one request header, the same on every report:
 
 | Header | Example | What it is |
 | --- | --- | --- |
-| `User-Agent` | `escape-fm/0.3.0 (claude-code)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
+| `User-Agent` | `escape-fm/0.4.0 (claude-code)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
 
 From it the relay counts, once a day for each paired machine, that this integration
 reported and how many reports it sent, with the country Cloudflare places the request
@@ -32,7 +33,8 @@ in (never the address). Those counts are all that is kept. How it is done is in 
 Nothing else. Your prompt is read locally to choose the work mode
 ([`scripts/classify.mjs`](scripts/classify.mjs), a short keyword list you can read
 in a minute) and is never sent, stored or logged. Tool inputs, file names, paths
-and outputs are not read at all; only tool names are, and they stay local.
+and outputs are not read at all; only tool names are, and they stay local. Whether a
+step failed is told by which event Claude Code runs, not by anything the tool returned.
 
 ## How the tags are chosen
 
@@ -43,6 +45,12 @@ and outputs are not read at all; only tool names are, and they stay local.
 | A permission prompt, a question to you, a plan awaiting approval | `waiting` |
 | Claude stops | `idle` |
 | The session ends | the session is removed |
+
+| Claude Code event | Outcome |
+| --- | --- |
+| A command, an edit or an MCP tool finishes (`PostToolUse`) | `true` |
+| It fails (`PostToolUseFailure`) | `false` |
+| Reading, searching, asking you, or a tool you stopped | none |
 
 The work mode comes from keywords in your message. A message with no hint
 ("continue", "ok") keeps the mode the session already had; if there was none, what
@@ -76,9 +84,8 @@ The player receives it through the URL fragment, which browsers never send to a
 server, and keeps it in local storage. Anyone holding the key can see these tags,
 so treat the pairing link as private. Delete `~/.escape-fm/config.json` to reset.
 
-The key is shared with escape.fm for [Codex](../integrations/codex/README.md) and for
-[Cursor](../integrations/cursor/README.md) on the same machine, so one player hears
-them all.
+The key is shared with escape.fm for every other agent on the same machine
+([`integrations/`](../integrations)), so one player hears them all.
 
 ## Settings
 

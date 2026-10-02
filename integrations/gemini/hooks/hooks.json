@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 6000 }] }
+    ],
+    "BeforeAgent": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 5000 }] }
+    ],
+    "BeforeTool": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 5000 }] }
+    ],
+    "AfterTool": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 5000 }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 5000 }] }
+    ],
+    "AfterAgent": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 5000 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 5000 }] }
+    ]
+  }
+}

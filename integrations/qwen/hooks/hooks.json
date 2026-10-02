@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 6 }]
+      }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "async": true, "timeout": 10 }] }
+    ],
+    "PreToolUse": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "async": true, "timeout": 10 }] }
+    ],
+    "PostToolUse": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "async": true, "timeout": 10 }] }
+    ],
+    "PostToolUseFailure": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "async": true, "timeout": 10 }] }
+    ],
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "async": true, "timeout": 10 }] }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "async": true, "timeout": 10 }]
+      }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 5 }] }
+    ],
+    "StopFailure": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 5 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node \"${extensionPath}/scripts/hook.mjs\"", "name": "escape-fm", "timeout": 5 }] }
+    ]
+  }
+}

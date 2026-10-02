@@ -1,0 +1,15 @@
+{
+  "name": "escape-fm",
+  "version": "0.4.0",
+  "description": "Background music that follows your work. Sends two tags per session (work mode, agent state), and whether the agent's steps succeed, to escape.fm; never your prompts, code or file names.",
+  "author": {
+    "name": "ILLUSION Tech Limited",
+    "email": "hello@escape.fm",
+    "url": "https://escape.fm"
+  },
+  "homepage": "https://escape.fm",
+  "repository": "https://github.com/escape-fm/plugins",
+  "license": "MIT",
+  "keywords": ["music", "focus", "ambient"],
+  "hooks": "hooks/hooks.json"
+}

@@ -20,7 +20,7 @@ And one request header, the same on every report:
 
 | Header | Example | What it is |
 | --- | --- | --- |
-| `User-Agent` | `escape-fm/0.3.0 (codex)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
+| `User-Agent` | `escape-fm/0.4.0 (codex)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
 
 From it the relay counts, once a day for each paired machine, that this integration
 reported and how many reports it sent, with the country Cloudflare places the request
@@ -58,6 +58,10 @@ Known gaps, all of them things Codex gives a hook no event for:
   refused) signals nothing, so the session keeps showing `running` until your next
   message or until Codex closes.
 - An MCP server asking you for input does not show as `waiting`.
+- Whether a command or an edit failed: Codex runs the same event for a command that
+  fails as for one that succeeds, with no exit code, and none for a patch that does not
+  apply. So this integration sends no `outcomes`, and the music cannot tell when Codex
+  keeps failing.
 - Web search runs no hook, so a turn that only searches shows as `user` until it ends.
 - Codex reads files with shell commands, which are not looked into, so "only reading"
   cannot be told apart and never turns the mode to `explore`; only a keyword does.
@@ -126,8 +130,8 @@ it was, and removes `~/.escape-fm/codex`.
 ## Pairing
 
 On first use the integration creates a random listener key in
-`~/.escape-fm/config.json`. The same key is used by escape.fm for Claude Code and for
-Cursor on this machine, so one player hears them all. The player receives it through
+`~/.escape-fm/config.json`. The same key is used by escape.fm for every other agent
+on this machine, so one player hears them all. The player receives it through
 the URL fragment, which browsers never send to a server, and keeps it in local
 storage. Anyone holding the key can see these tags, so treat the pairing link as
 private. Delete `~/.escape-fm/config.json` to reset.
