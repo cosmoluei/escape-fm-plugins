@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Runs on Factory Droid hook events and reports two tags for this session: the work mode
-// and the agent state. That, a random session id and a timestamp are everything that
-// leaves the machine. See README.md.
+// and the agent state, how many of the agent's steps there were of each kind, and, only
+// when the listener has asked for them, the lines of code of the session's work. That, a
+// random session id and a timestamp are everything that leaves the machine. See README.md.
 //
 // This file is the Droid part: which of its events mean what. The rest is shared with the
 // other agents' integrations (session.mjs, classify.mjs, lib.mjs).
@@ -10,15 +11,25 @@
 // so this prints nothing and hands each report to a process of its own.
 
 import { readFileSync } from 'node:fs'
+import { stepOf } from './classify.mjs'
 import { report } from './session.mjs'
 
 const EDIT = new Set(['Edit', 'Create', 'ApplyPatch'])
 const READ = new Set(['Read', 'LS', 'Glob', 'Grep', 'FetchUrl', 'WebSearch'])
 /** The tool that asks the listener something. */
 const ASK = new Set(['AskUser'])
+/** The shell. */
+const SHELL = new Set(['Execute'])
 
-/** Only the name of a tool is looked at, never what it is given or what it returns. */
+/**
+ * Of a tool, only its name is looked at, and for the shell its command, here and only to tell a test
+ * run or a commit from any other command (`stepOf` in classify.mjs); nothing of either leaves the
+ * machine, only the kind of step. What a tool is given otherwise, and what it returns, is not read.
+ */
 const kindOf = (name) => (ASK.has(name) ? 'ask' : EDIT.has(name) ? 'edit' : READ.has(name) ? 'read' : 'other')
+
+/** A finished tool's kind of step: for the shell, from its command, which goes no further. */
+const stepFor = (input) => stepOf(kindOf(input.tool_name), SHELL.has(input.tool_name) ? String(input.tool_input?.command ?? '') : undefined)
 
 /**
  * @returns {import('./session.mjs').Step | null}
@@ -35,7 +46,7 @@ function toStep(input) {
     case 'PreToolUse':
       return { id, kind: 'tool', tool: kindOf(input.tool_name) }
     case 'PostToolUse':
-      return { id, kind: 'running' }
+      return { id, kind: 'running', step: stepFor(input) }
     case 'Notification':
       // Droid sends `idle_prompt` instead of `Stop` when the listener stops a turn
       if (input.notification_type === 'idle_prompt') return { id, kind: 'stop' }
@@ -53,6 +64,8 @@ async function main() {
   if (process.env.ESCAPE_FM_DISABLE) return
   const input = JSON.parse(readFileSync(0, 'utf8'))
   const step = input.session_id ? toStep(input) : null
+  // where git counts the lines of code, when the listener has asked for them; never sent
+  if (step && typeof input.cwd === 'string') step.cwd = input.cwd
   // A start opens the player the first time on this machine; nothing is said about it, since
   // the listener would not see it. Only a start or a message opens a session: a subagent's
   // tools may arrive under an id of their own.

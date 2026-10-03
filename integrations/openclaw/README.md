@@ -21,6 +21,9 @@ Per conversation, as the agent works:
 | `ts` | `1790765086341` | When the event happened |
 | `computer` | `Ada's Mac mini` | The name of the computer the gateway runs on, as its system settings have it, so your page can list it by name. Set `ESCAPE_FM_COMPUTER_NAME` to change it, or to an empty value to send none |
 | `outcomes` | `[true, false]` | Whether each of the agent's steps since the last report succeeded or failed, oldest first: a command, an edit, a message sent, a browser action, from whether OpenClaw reports the tool's result as an error. Never what the step was. Left out when there are none |
+| `steps` | `{"edit": 3, "command": 1}` | How many of the agent's steps since the last report were of each kind: `edit`, `command`, `search` (reading) or `other`, counted when a tool finishes. A command counts as a command: the plugin never reads what a tool is given, so a test run or a commit cannot be told apart. Left out when there were none |
+| `lines` | `{"added": 120, "removed": 14, "commits": 1}` | **Only if you have switched on "Lines of code" on your page in escape.fm.** At the end of a turn, the lines added and removed and the commits made since the last report, counted with git in the gateway's working folder (OpenClaw names no folder). Never a file name, a commit message or a diff |
+| `usage` | `{"tokens": 18240, "cost": 0.06}` | **Only if you have switched on "Tokens and cost" on your page in escape.fm.** The tokens the agent's turns used since the last report, and their cost in US dollars when OpenClaw has a cost table, as OpenClaw counts them |
 
 When a conversation ends (`/new`, `/reset`, a daily or idle reset), one last report says
 so: `session`, `ts` and `end: true`.
@@ -29,16 +32,22 @@ And one request header, the same on every report:
 
 | Header | Example | What it is |
 | --- | --- | --- |
-| `User-Agent` | `escape-fm/0.5.0 (openclaw)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
+| `User-Agent` | `escape-fm/0.6.0 (openclaw)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
 
 From it the relay counts, once a day for each paired machine, that this integration
 reported and how many reports it sent, with the country Cloudflare places the request
 in (never the address). Those counts are all that is kept. How it is done is in [docs/analytics.md](../../docs/analytics.md).
 
+`lines` and `usage` are off until you switch them on, on your page in escape.fm ("Lines of
+code", "Tokens and cost", under the history section). escape.fm's answer to each report says
+which are on, and the plugin keeps that in `~/.escape-fm/share.json`; while one is off, nothing
+of it is counted, kept or sent (for lines, git is not even run).
+
 Nothing else. **No message is read**, yours or anyone's, nor the agent's replies: the
 plugin passes on only the conversation's key, what happened (a message arrived, a run
-started or ended, a tool started or finished, an approval is pending), a tool's name and
-whether it failed. So the work mode comes from what the agent does (mostly edits is `deep`,
+started or ended, a tool started or finished, an approval is pending), a tool's name,
+whether it failed, and a turn's tokens and cost, which go no further unless you have
+switched on "Tokens and cost". So the work mode comes from what the agent does (mostly edits is `deep`,
 only reading is `explore`), never from what was written, and is `deep` until the tools say
 otherwise. Tool inputs, results, commands, file names and paths are not read, apart from
 whether a result is an error.

@@ -70,3 +70,65 @@ export function fromTools(tools) {
   if (reads >= 4 && edits === 0) return 'explore'
   return null
 }
+
+/**
+ * Test runners, as the start of one command in a shell command line. Like RULES, a list to read
+ * rather than a parser: a test run that is not here is counted as a command, which is no harm.
+ */
+const TESTS = [
+  /^(npm|pnpm|yarn|bun)( (--?[\w-]+(=\S+)?|--filter \S+|-F \S+|workspace \S+|--prefix \S+))* (run )?(test|t)(\s|:|$)/,
+  /^(npx|bunx|pnpm( exec| dlx)?|yarn( exec| dlx)?|bun( x)?) (jest|vitest|mocha|playwright test)\b/,
+  /^((\.\/)?node_modules\/\.bin\/)?(jest|vitest|mocha)\b/,
+  /^((uv|poetry|pipenv|pdm|hatch) run )?(pytest|py\.test|python[\d.]* -m (pytest|unittest))\b/,
+  /^go test\b/,
+  /^cargo( \+\S+)? (test|nextest)\b/,
+  /^swift test\b/,
+  /^xcodebuild\b.*\s(test|test-without-building)(\s|$)/,
+  /^(\.\/)?mvnw?\b.*\s(test|verify)(\s|$)/,
+  /^(\.\/)?gradlew?\b.*\s(\S+:)?test(\s|$)/,
+  /^(bundle exec )?(bin\/)?(rspec|rake (test|spec)|rails test)\b/,
+  /^((\.\/)?vendor\/bin\/)?phpunit\b/,
+  /^dotnet test\b/,
+  /^make\b.*\s(test|check)(\s|$)/,
+  /^(ctest|tox|nox)\b/,
+  /^node( --[\w-]+(=\S+)?)* --test\b/,
+  /^deno test\b/,
+  /^mix test\b/,
+]
+/** A commit: `git commit`, also with options before it, such as `git -C dir commit` or `git -c key=value commit`. */
+const COMMIT = /^git( -C \S+| -c \S+| --[\w-]+(=\S+)?)* commit(\s|$)/
+
+/** What may come before a command and is not it: a shell running it, a subshell, quotes, `sudo`, settings for its environment. */
+const WRAPPER = /^(\s+|[("'{]+|(ba|z|da|k)?sh( -\w+)* |(sudo|time|env|command|exec|nohup|nice) |timeout \S+ |\w+=("[^"]*"|'[^']*'|\S*) )/
+
+/** One command of a command line, without what wraps it. */
+function bare(part) {
+  let text = part
+  for (let i = 0; i < 12; i++) {
+    const found = text.match(WRAPPER)
+    if (!found) break
+    text = text.slice(found[0].length)
+  }
+  return text
+}
+
+/**
+ * What kind of step a tool that has finished was, for the counts a report carries
+ * (docs/integrations.md, "Steps"). Only the kind leaves the machine, never the tool or the command.
+ * @param {'edit' | 'read' | 'ask' | 'other'} kind what kind of tool it is, as the hook script tells it
+ * @param {string} [command] for the agent's shell tool, the command it ran (an empty string when it
+ *   is not known); left out for any other tool. Looked at here, only to tell a test run or a commit,
+ *   and not kept or sent anywhere.
+ * @returns {'edit' | 'command' | 'test' | 'search' | 'commit' | 'other' | undefined} undefined for no step: asking the listener
+ */
+export function stepOf(kind, command) {
+  if (kind === 'ask') return undefined
+  if (kind === 'edit') return 'edit'
+  if (kind === 'read') return 'search'
+  if (typeof command !== 'string') return 'other'
+  // each command of a line such as `cd app && pnpm test | tail`; one that commits is a commit, whatever it ran first
+  const parts = command.slice(0, 4000).split(/&&|\|\||[;|&\n]/).map(bare)
+  if (parts.some((part) => COMMIT.test(part))) return 'commit'
+  if (parts.some((part) => TESTS.some((pattern) => pattern.test(part)))) return 'test'
+  return 'command'
+}

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Runs on Qwen Code hook events and reports two tags for this session: the work mode
-// and the agent state, and whether each of the agent's steps went through. That, a
-// random session id and a timestamp are everything that leaves the machine. See README.md.
+// and the agent state, whether each of the agent's steps went through and how many of
+// each kind there were, and, only when the listener has asked for them, the lines of code
+// of the session's work. That, a random session id and a timestamp are everything that
+// leaves the machine. See README.md.
 //
 // This file is the Qwen Code part: which of its events mean what. The rest is shared
 // with the other agents' integrations (session.mjs, classify.mjs, lib.mjs).
@@ -9,12 +11,15 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stepOf } from './classify.mjs'
 import { report, welcome } from './session.mjs'
 
 const EDIT = new Set(['edit', 'write_file'])
 const READ = new Set(['read_file', 'read_many_files', 'grep_search', 'glob', 'list_directory', 'web_fetch', 'web_search'])
 /** The tool that asks the listener something. */
 const ASK = new Set(['ask_user_question'])
+/** The shell. */
+const SHELL = new Set(['run_shell_command'])
 /**
  * The end of a turn and of a session: their reports are handed to a process of their own and
  * the hook returns at once. Qwen Code ends a background hook still running when it exits, so
@@ -22,8 +27,15 @@ const ASK = new Set(['ask_user_question'])
  */
 const HURRIED = new Set(['Stop', 'StopFailure', 'SessionEnd'])
 
-/** Only the name of a tool is looked at, never what it is given or what it returns. */
+/**
+ * Of a tool, only its name is looked at, and for the shell its command, here and only to tell a test
+ * run or a commit from any other command (`stepOf` in classify.mjs); nothing of either leaves the
+ * machine, only the kind of step. What a tool is given otherwise, and what it returns, is not read.
+ */
 const kindOf = (name) => (ASK.has(name) ? 'ask' : EDIT.has(name) ? 'edit' : READ.has(name) ? 'read' : 'other')
+
+/** A finished tool's kind of step: for the shell, from its command, which goes no further. */
+const stepFor = (input) => stepOf(kindOf(input.tool_name), SHELL.has(input.tool_name) ? String(input.tool_input?.command ?? '') : undefined)
 
 /**
  * A finished tool as a step of the agent's: whether it went through, which Qwen Code says by the
@@ -49,10 +61,10 @@ function toStep(input) {
     case 'PreToolUse':
       return { id, kind: 'tool', tool: kindOf(input.tool_name) }
     case 'PostToolUse':
-      return { id, kind: 'running', ok: outcome(input.tool_name, true) }
+      return { id, kind: 'running', ok: outcome(input.tool_name, true), step: stepFor(input) }
     case 'PostToolUseFailure':
-      // a tool the listener stopped did not fail
-      return input.is_interrupt === true ? null : { id, kind: 'running', ok: outcome(input.tool_name, false) }
+      // a tool the listener stopped did not fail, and is no step
+      return input.is_interrupt === true ? null : { id, kind: 'running', ok: outcome(input.tool_name, false), step: stepFor(input) }
     case 'PermissionRequest':
     case 'Notification':
       return { id, kind: 'waiting' }
@@ -71,6 +83,8 @@ async function main() {
   const input = JSON.parse(readFileSync(0, 'utf8'))
   const step = input.session_id ? toStep(input) : null
   if (!step) return
+  // where git counts the lines of code, when the listener has asked for them; never sent
+  if (typeof input.cwd === 'string') step.cwd = input.cwd
 
   const first = await report(step, { detach: HURRIED.has(input.hook_event_name) })
   if (first) {

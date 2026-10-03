@@ -5,7 +5,8 @@ plugins tell the player what your AI agent is doing, so the music can step back
 while the agent runs and come forward when it needs you.
 
 They are open source so that you can check, line by line, that they send two tags,
-whether the agent's steps succeed, and nothing about your work.
+whether the agent's steps succeed and what kind each was, the lines of code and the
+tokens and cost only if you ask for them, and nothing about your work.
 
 The easiest way to install is to ask your agent to do it. Paste this into it:
 
@@ -49,15 +50,24 @@ On hook events, for each session:
 | `ts` | `1790765086341` | When the event happened |
 | `computer` | `Ada's MacBook Pro` | This computer's name as you see it in your system settings (macOS: Computer Name; Windows and Linux: the host name), so your page can list it by name. Set `ESCAPE_FM_COMPUTER_NAME` to change it, or to an empty value to send none |
 | `outcomes` | `[true, false]` | Whether each of the agent's steps since the last report (a command, an edit, an MCP tool) succeeded or failed, oldest first. Never what the step was. Left out when there are none, and never sent for Codex or Droid, which cannot tell |
+| `steps` | `{"edit": 3, "test": 1}` | How many of the agent's steps since the last report were of each kind: `edit`, `command`, `test`, `search` (reading), `commit` or `other`, counted when a tool finishes. A shell command is told apart as a test run or a commit from its command, on your machine; the command is never sent or kept. Left out when there were none |
+| `lines` | `{"added": 120, "removed": 14, "commits": 1}` | **Only if you have switched on "Lines of code" on your page in escape.fm.** At the end of a turn, the lines added and removed and the commits made since the last report, counted with git in the folder the agent works in. Never a file name, a commit message or a diff |
+| `usage` | `{"tokens": 0, "cost": 0.42}` | **Only if you have switched on "Tokens and cost" on your page in escape.fm**, and only from the agents that can tell: Claude Code's cost, once you set up its status line ([`plugin/README.md`](plugin/README.md)), and OpenClaw's tokens and cost. Since the last report |
 
 When a session ends, one last report says so: `session`, `ts` and `end: true`, so its
 state is removed at once rather than after half an hour.
 
+`lines` and `usage` are off until you switch them on, on your page in escape.fm ("Lines of
+code", "Tokens and cost", under the history section). escape.fm's answer to each report says
+which are on, and the plugins keep that in `~/.escape-fm/share.json`; while one is off,
+nothing of it is counted, kept or sent (for lines, git is not even run).
+
 Nothing else. Your prompt is read locally to choose the work mode
 ([`shared/classify.mjs`](shared/classify.mjs), a short keyword list) and is never
-sent, stored or logged. Tool inputs, commands, file names, paths, outputs and error
-messages are not read at all; whether a step failed is told by which event the agent
-runs. The [privacy policy](https://escape.fm/privacy) covers what the service
+sent, stored or logged. Tool inputs, file names, paths, outputs and error messages are
+not read at all; of a shell command only the command is looked at, in the same file
+(`stepOf`), to tell a test run or a commit, and it goes no further. Whether a step failed
+is told by which event the agent runs. The [privacy policy](https://escape.fm/privacy) covers what the service
 keeps.
 
 Each agent reports a little differently, and none of them can report everything;
@@ -71,8 +81,9 @@ node scripts/test-integrations.mjs
 ```
 
 The test runs each plugin against a local stand-in for the server and asserts that
-only those fields go out, outcomes as nothing but `true` or `false`, and that no
-prompt, path, command, output, error or email address is ever sent or written to disk.
+only those fields go out, outcomes as nothing but `true` or `false` and steps as nothing
+but counts, lines of code and tokens and cost only when asked for, and that no prompt,
+path, command, output, error or email address is ever sent or written to disk.
 
 The logic they share lives once in `shared/`; each plugin folder carries a copy
 because agents install a plugin by copying its folder. `node scripts/sync-integrations.mjs`

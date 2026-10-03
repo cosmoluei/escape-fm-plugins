@@ -1,6 +1,6 @@
 {
   "name": "escape-fm",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "escape.fm for OpenClaw: background music that follows your work.",
   "type": "module",

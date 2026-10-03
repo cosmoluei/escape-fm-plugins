@@ -1,7 +1,7 @@
 {
   "id": "escape-fm",
   "name": "escape.fm",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Background music that follows your work. Sends two tags per conversation (work mode, agent state), and whether the agent's steps succeed, to escape.fm; never your messages, its replies or file names.",
   "activation": { "onStartup": true },
   "configSchema": { "type": "object", "additionalProperties": false, "properties": {} }

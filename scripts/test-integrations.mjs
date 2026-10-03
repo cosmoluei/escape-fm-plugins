@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 // Feeds each integration's hook script the events its agent sends, in the shape that
 // agent documents, and checks what reaches the relay: the four fields, the computer's
-// name, whether the agent's steps went through, and nothing else, under a User-Agent
-// that names the integration and its version and nothing more.
+// name, whether the agent's steps went through and how many of each kind, the lines of
+// code and the tokens and cost only when the listener asked for them, and nothing else,
+// under a User-Agent that names the integration and its version and nothing more.
 // The relay here is a stand-in that only records requests; nothing leaves the machine
 // and nothing outside a temporary folder is touched.
 //
 //   node scripts/test-integrations.mjs
 
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -50,6 +51,7 @@ const eventsIn = (config) => (config.hooks && typeof config.hooks === 'object' &
 /** The header, exactly: `escape-fm/<version> (<client>)`. */
 const userAgent = (tool) => `escape-fm/${JSON.parse(readFileSync(path.join(ROOT, CLIENT[tool].manifest), 'utf8')).version} (${CLIENT[tool].name})`
 const MODES = ['deep', 'debug', 'explore', 'ideate', 'analyze', 'polish', 'routine', 'plan']
+const STEP_KINDS = ['edit', 'command', 'test', 'search', 'commit', 'other']
 const AGENTS = ['user', 'running', 'waiting', 'idle']
 
 // Things an agent hands a hook that must never be sent or kept. Every event below carries some.
@@ -78,20 +80,24 @@ async function test(name, body) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** A stand-in relay: answers as the real one does and keeps what it was sent. */
+/**
+ * A stand-in relay: answers as the real one does and keeps what it was sent. `answer` is what it
+ * answers: as for a key no account has claimed, unless a test sets `share` in it.
+ */
 async function relay() {
   const seen = []
+  const stand = { answer: { listeners: 0 } }
   const server = createServer((req, res) => {
     let body = ''
     req.on('data', (chunk) => (body += chunk))
     req.on('end', () => {
       seen.push({ method: req.method, url: req.url, headers: req.headers, body })
       res.setHeader('content-type', 'application/json')
-      res.end('{"listeners":0}')
+      res.end(JSON.stringify(stand.answer))
     })
   })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-  return {
+  return Object.assign(stand, {
     seen,
     url: `http://127.0.0.1:${server.address().port}`,
     close: () => server.close(),
@@ -100,7 +106,7 @@ async function relay() {
       for (let i = 0; i < 100 && seen.length < count; i++) await sleep(50)
       if (seen.length === count) await sleep(150)
     },
-  }
+  })
 }
 
 /** A machine of its own for one test: an empty home, and the stand-in as its relay. */
@@ -174,10 +180,11 @@ function checkKept(m) {
 }
 
 /**
- * The promise, checked: exactly four fields go out, and the computer's name and the outcomes, under the key, and nothing private is sent.
- * The one header that says anything beyond that names the integration and its version, openly.
+ * The promise, checked: exactly four fields go out, and the computer's name, the outcomes and the steps by kind, under the key, and
+ * nothing private is sent; the lines of code and the tokens and cost only when the listener `asked` for them. The one header that
+ * says anything beyond that names the integration and its version, openly.
  */
-function checkPrivacy(m, ids, tool) {
+function checkPrivacy(m, ids, tool, asked = false) {
   const key = JSON.parse(readFileSync(path.join(m.fm, 'config.json'), 'utf8')).key
   assert.ok(m.server.seen.length > 0, 'something was posted')
   for (const request of m.server.seen) {
@@ -192,11 +199,28 @@ function checkPrivacy(m, ids, tool) {
     const extra = Object.keys(request.headers).filter((name) => !known.includes(name))
     assert.deepEqual(extra, [], `headers sent: ${Object.keys(request.headers).join(', ')}`)
     const body = JSON.parse(request.body)
-    const fields = Object.keys(body).filter((name) => name !== 'outcomes').sort().join(',')
+    const counts = ['outcomes', 'steps', 'lines', 'usage']
+    const fields = Object.keys(body).filter((name) => !counts.includes(name)).sort().join(',')
     assert.ok(
-      fields === 'agent,computer,mode,session,ts' || fields === 'agent,mode,session,ts' || (fields === 'end,session,ts' && !('outcomes' in body)),
+      fields === 'agent,computer,mode,session,ts' || fields === 'agent,mode,session,ts' || (fields === 'end,session,ts' && !counts.some((name) => name in body)),
       `fields posted: ${Object.keys(body).sort().join(',')}`,
     )
+    if ('steps' in body) {
+      // how many of each kind, and nothing of what the steps were
+      assert.ok(body.steps && typeof body.steps === 'object' && !Array.isArray(body.steps), `steps: ${JSON.stringify(body.steps)}`)
+      for (const [kind, n] of Object.entries(body.steps)) {
+        assert.ok(STEP_KINDS.includes(kind) && Number.isSafeInteger(n) && n > 0 && n <= 1000, `steps: ${JSON.stringify(body.steps)}`)
+      }
+    }
+    assert.ok(asked || !('lines' in body || 'usage' in body), `sent without being asked for: ${JSON.stringify(body)}`)
+    if ('lines' in body) {
+      assert.deepEqual(Object.keys(body.lines).sort(), ['added', 'commits', 'removed'])
+      assert.ok(Object.values(body.lines).every((n) => Number.isSafeInteger(n) && n >= 0), `lines: ${JSON.stringify(body.lines)}`)
+    }
+    if ('usage' in body) {
+      assert.deepEqual(Object.keys(body.usage).sort(), ['cost', 'tokens'])
+      assert.ok(Number.isSafeInteger(body.usage.tokens) && body.usage.tokens >= 0 && Number.isFinite(body.usage.cost) && body.usage.cost >= 0, `usage: ${JSON.stringify(body.usage)}`)
+    }
     if ('outcomes' in body) {
       // yes or no for each step, and nothing of what the step was
       assert.ok(Array.isArray(body.outcomes) && body.outcomes.length > 0 && body.outcomes.length <= 32, `outcomes: ${JSON.stringify(body.outcomes)}`)
@@ -770,7 +794,11 @@ await test('OpenClaw: the plugin passes on only the conversation, the event, a t
   const { api, hook, stream, hooks } = openclawApi()
   const sent = []
   listen(api, (event) => sent.push(event))
-  assert.deepEqual([...hooks.keys()].sort(), ['after_tool_call', 'before_tool_call', 'gateway_start', 'message_received', 'session_end'], 'no hook that hands over the conversation, or can change anything but a tool call, which it never does')
+  assert.deepEqual(
+    [...hooks.keys()].sort(),
+    ['after_tool_call', 'before_tool_call', 'gateway_start', 'message_received', 'reply_payload_sending', 'session_end'],
+    'no hook that hands over the conversation but a reply going out, which is not read; none can change anything, and none does',
+  )
 
   const key = 'agent:main:telegram:direct:12345678'
   const group = 'agent:main:telegram:group:-100987654'
@@ -981,6 +1009,384 @@ await test('without curl, the fallback sends the same four fields under the same
   checkPrivacy(m, [id], 'claude')
   m.done()
 })
+
+// ------------------------------------------------- steps, and what is asked for
+
+/** Shell commands a step is told by: run here, and never to be sent or kept. */
+const TEST_RUN = 'cd app && pnpm test --filter refunds'
+const COMMIT = 'git commit -m "balance the refunds ledger"'
+
+/**
+ * For each agent, how it opens a turn, how a tool that finished looks (`done(tool, command)`), how a
+ * turn ends, and its tools: an edit, a read, its shell, another tool, and one that asks the listener.
+ */
+const STEPPED = {
+  claude: {
+    open: (id) => claude(id, 'UserPromptSubmit', { prompt: 'continue' }),
+    done: (id, tool_name, command) => claude(id, 'PostToolUse', { tool_name, tool_use_id: 't', tool_input: { command, file_path: PRIVATE.file }, tool_response: { stdout: PRIVATE.output } }),
+    stop: (id) => claude(id, 'Stop', { last_assistant_message: PRIVATE.reply }),
+    tools: { edit: 'Edit', read: 'Grep', shell: 'Bash', other: 'mcp__github__create_issue', ask: 'AskUserQuestion' },
+  },
+  codex: {
+    open: (id) => codex(id, 'UserPromptSubmit', { prompt: 'continue' }),
+    // a command as the list of a program's arguments, as Codex may give it
+    done: (id, tool_name, command) => codexTool(id, 'PostToolUse', tool_name, { tool_input: { command: command === TEST_RUN ? ['bash', '-lc', command] : command } }),
+    stop: (id) => codex(id, 'Stop', { stop_hook_active: false, last_assistant_message: PRIVATE.reply }),
+    tools: { edit: 'apply_patch', shell: 'Bash', other: 'mcp__github__create_issue', ask: 'request_user_input' },
+  },
+  cursor: {
+    open: (id) => cursor('beforeSubmitPrompt', id, { prompt: 'continue' }),
+    done: (id, tool_name, command) => cursorTool('postToolUse', id, tool_name, { tool_input: { command, file_path: PRIVATE.file } }),
+    stop: (id) => cursor('stop', id, { status: 'completed', loop_count: 0 }),
+    tools: { edit: 'Write', read: 'Read', shell: 'Shell', other: 'MCP:create_issue', ask: 'AskQuestion' },
+  },
+  qwen: {
+    open: (id) => qwen(id, 'UserPromptSubmit', { prompt: 'continue', submitted_prompt: 'continue' }),
+    done: (id, tool_name, command) => qwenTool(id, 'PostToolUse', tool_name, { tool_input: { command, file_path: PRIVATE.file } }),
+    stop: (id) => qwen(id, 'Stop', { stop_hook_active: false, last_assistant_message: PRIVATE.reply }),
+    tools: { edit: 'edit', read: 'grep_search', shell: 'run_shell_command', other: 'mcp__github__create_issue', ask: 'ask_user_question' },
+  },
+  gemini: {
+    open: (id) => gemini(id, 'BeforeAgent', { prompt: 'continue' }),
+    done: (id, tool_name, command) => geminiTool(id, 'AfterTool', tool_name, { tool_input: { command, file_path: PRIVATE.file } }),
+    stop: (id) => gemini(id, 'AfterAgent', { prompt: PRIVATE.words, prompt_response: PRIVATE.reply }),
+    tools: { edit: 'replace', read: 'read_file', shell: 'run_shell_command', other: 'mcp_github_create_issue', ask: 'ask_user' },
+  },
+  copilot: {
+    open: (id) => copilot('userPromptSubmitted', id, { prompt: 'continue' }),
+    // the command in `toolArgs`, a JSON string, and once in snake_case `tool_input`
+    done: (id, toolName, command) =>
+      command === COMMIT
+        ? copilot('postToolUse', id, { tool_name: toolName, tool_input: { command } })
+        : copilotTool('postToolUse', id, toolName, { toolArgs: JSON.stringify({ command, path: PRIVATE.file }) }),
+    stop: (id) => copilot('agentStop', id, { stopReason: 'end_turn' }),
+    tools: { edit: 'edit', read: 'view', shell: 'bash', other: 'github-mcp-server-create_issue', ask: 'ask_user' },
+  },
+  droid: {
+    open: (id) => droid(id, 'UserPromptSubmit', { prompt: 'continue' }),
+    done: (id, tool_name, command) => droidTool(id, 'PostToolUse', tool_name, { tool_input: { command, file_path: PRIVATE.file } }),
+    stop: (id) => droid(id, 'Stop', { stop_hook_active: false }),
+    tools: { edit: 'Edit', read: 'Read', shell: 'Execute', other: 'mcp__github__create_issue', ask: 'AskUser' },
+  },
+  codebuddy: {
+    open: (id) => buddy(id, 'UserPromptSubmit', { prompt: 'continue' }),
+    done: (id, tool_name, command) => buddyTool(id, 'PostToolUse', tool_name, { tool_input: { command, file_path: PRIVATE.file } }),
+    stop: (id) => buddy(id, 'Stop', { stop_hook_active: false, last_assistant_message: PRIVATE.reply }),
+    tools: { edit: 'Edit', read: 'Read', shell: 'Bash', other: 'mcp__github__create_issue', ask: 'AskUserQuestion' },
+  },
+  muse: {
+    open: (id) => muse(id, 'UserPromptSubmit', { prompt: 'continue' }),
+    done: (id, tool_name, command) => museTool(id, 'PostToolUse', tool_name, { tool_input: { command, path: PRIVATE.file } }),
+    stop: (id) => muse(id, 'Stop', { stop_hook_active: false, last_assistant_message: PRIVATE.reply }),
+    tools: { edit: 'edit_file', read: 'search', shell: 'bash', other: 'mcp__github__create_issue', ask: 'request_user_input' },
+  },
+  openclaw: {
+    open: (id) => [[], { session_id: id, hook_event_name: 'message_received' }],
+    // the plugin passes on no tool's input, so a command is not known here
+    done: (id, tool_name) => [[], { session_id: id, hook_event_name: 'tool_end', tool_name, failed: false }],
+    stop: (id) => [[], { session_id: id, hook_event_name: 'run_end' }],
+    tools: { edit: 'edit', read: 'read', shell: 'exec', other: 'browser' },
+  },
+}
+STEPPED.workbuddy = STEPPED.codebuddy
+
+/** Every step any report carried, added up. */
+function stepsSent(m) {
+  const total = {}
+  for (const request of m.server.seen) {
+    for (const [kind, n] of Object.entries(JSON.parse(request.body).steps ?? {})) total[kind] = (total[kind] ?? 0) + n
+  }
+  return total
+}
+
+/** Nothing of the commands a step was told by is sent or kept. */
+function checkCommands(m) {
+  const wire = m.server.seen.map((request) => request.body).join('\n')
+  const kept = allFiles(m.fm).map((file) => readFileSync(file, 'utf8')).join('\n')
+  for (const word of ['pnpm', 'refunds', 'git commit', 'balance the', ...SECRETS]) {
+    assert.ok(!wire.includes(word), `sent: ${word}`)
+    assert.ok(!kept.includes(word), `kept: ${word}`)
+  }
+}
+
+for (const [name, agent] of Object.entries(STEPPED)) {
+  await test(`${name}: each finished tool is counted by its kind, and the command it ran goes nowhere`, async () => {
+    const m = await machine()
+    const id = 'ab5e1100-0000-4000-8000-000000000010'
+    const { tools } = agent
+    const events = [
+      agent.open(id),
+      agent.done(id, tools.edit),
+      ...(tools.read ? [agent.done(id, tools.read)] : []),
+      agent.done(id, tools.shell, PRIVATE.command),
+      agent.done(id, tools.shell, TEST_RUN),
+      agent.done(id, tools.shell, COMMIT),
+      agent.done(id, tools.other),
+      ...(tools.ask ? [agent.done(id, tools.ask)] : []),
+      agent.stop(id),
+    ]
+    // OpenClaw's plugin never reads a tool's input: every command is a command
+    const want =
+      name === 'openclaw'
+        ? { edit: 1, search: 1, command: 3, other: 1 }
+        : { edit: 1, ...(tools.read ? { search: 1 } : {}), command: 1, test: 1, commit: 1, other: 1 }
+    await play(m, HOOK[name], events)
+    assert.deepEqual(stepsSent(m), want)
+    // the last report, at the end of the turn, carries what was not sent yet; none is sent twice
+    assert.ok(m.server.seen.length >= 2)
+    checkPrivacy(m, [id], name)
+    checkCommands(m)
+    m.done()
+  })
+}
+
+await test('Claude Code: a step that failed is a step, and one the listener stopped is not', async () => {
+  const m = await machine()
+  const id = 'ab5e1100-0000-4000-8000-000000000011'
+  await play(m, HOOK.claude, [
+    claude(id, 'UserPromptSubmit', { prompt: 'continue' }),
+    claudeFailure(id, 'Edit'),
+    claudeFailure(id, 'Bash', { tool_input: { command: TEST_RUN } }),
+    claudeFailure(id, 'Bash', { tool_input: { command: COMMIT }, is_interrupt: true }),
+    claude(id, 'Stop'),
+  ])
+  assert.deepEqual(stepsSent(m), { edit: 1, test: 1 })
+  checkPrivacy(m, [id], 'claude')
+  checkCommands(m)
+  m.done()
+})
+
+await test('Cursor: a tool the listener would not allow is no step', async () => {
+  const m = await machine()
+  const id = 'ab5e1100-0000-4000-8000-000000000012'
+  await play(m, HOOK.cursor, [
+    cursor('beforeSubmitPrompt', id, { prompt: 'continue' }),
+    cursorTool('postToolUseFailure', id, 'Shell', { failure_type: 'permission_denied', tool_input: { command: COMMIT } }),
+    cursorTool('postToolUseFailure', id, 'Shell', { tool_input: { command: TEST_RUN } }),
+    cursor('stop', id, { status: 'completed' }),
+  ])
+  assert.deepEqual(stepsSent(m), { test: 1 })
+  checkPrivacy(m, [id], 'cursor')
+  m.done()
+})
+
+/** git, for setting up a repository in a test; with a home of the test's own, so no setting of this machine's applies. */
+function gitIn(m, cwd, ...args) {
+  return execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], {
+    cwd,
+    env: { PATH: process.env.PATH, HOME: m.home, GIT_CONFIG_NOSYSTEM: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).toString()
+}
+
+/** A repository with one commit of a three-line file, and one more line not committed: what was there before the session. */
+function repository(m) {
+  const repo = path.join(m.home, 'work', 'orbital')
+  mkdirSync(repo, { recursive: true })
+  gitIn(m, repo, 'init', '-q')
+  writeFileSync(path.join(repo, 'a.txt'), 'one\ntwo\nthree\n')
+  gitIn(m, repo, 'add', 'a.txt')
+  gitIn(m, repo, 'commit', '-q', '-m', 'first')
+  writeFileSync(path.join(repo, 'a.txt'), 'one\ntwo\nthree\nfour\n')
+  return repo
+}
+
+/** A `git` that only notes it was run, put first on the PATH. */
+function watchedGit(m) {
+  const bin = path.join(m.home, 'watched-bin')
+  const calls = path.join(m.home, 'git-calls.txt')
+  mkdirSync(bin, { recursive: true })
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\necho "$*" >> "${calls}"\nexit 1\n`, { mode: 0o755 })
+  return { env: { ...m.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` }, calls }
+}
+
+const STATUSLINE = path.join(ROOT, 'plugin/scripts/statusline.mjs')
+const statusLine = (m, session_id, cost) =>
+  run(STATUSLINE, [], { session_id, transcript_path: PRIVATE.transcript, cwd: PRIVATE.cwd, model: { id: 'claude-opus-4-7', display_name: 'Opus' }, cost: { total_cost_usd: cost, total_duration_ms: 1000 } }, m.env)
+
+await test('not asked for: no lines of code and no usage are sent, git is not run, and the status line keeps nothing', async () => {
+  const m = await machine()
+  const repo = repository(m)
+  const { env, calls } = watchedGit(m)
+  const id = 'ab5e1100-0000-4000-8000-000000000020'
+  const shown = await statusLine({ ...m, env }, id, 0.42)
+  assert.equal(shown.out, 'Opus\n', 'only the model, when tokens and cost are not counted')
+  await play({ ...m, env }, HOOK.claude, [
+    claude(id, 'SessionStart', { source: 'startup', cwd: repo }),
+    claude(id, 'UserPromptSubmit', { prompt: 'continue', cwd: repo }),
+    claudeTool(id, 'PostToolUse', 'Edit'),
+    claude(id, 'Stop', { cwd: repo }),
+  ])
+  assert.ok(!existsSync(calls), 'git was not run')
+  assert.ok(!existsSync(path.join(m.fm, 'usage')), 'the status line wrote nothing')
+  const share = JSON.parse(readFileSync(path.join(m.fm, 'share.json'), 'utf8'))
+  assert.deepEqual([share.lines, share.usage], [false, false], 'an answer with no `share` asks for nothing')
+  checkPrivacy(m, [id], 'claude')
+  m.done()
+})
+
+await test('asked for: the end of a turn carries the lines of code from git and the cost from the status line, and an answer without `share` stops them', async () => {
+  const m = await machine()
+  const repo = repository(m)
+  m.server.answer = { listeners: 1, share: { lines: true, usage: true } }
+  const id = 'ab5e1100-0000-4000-8000-000000000021'
+  const sent = () => JSON.parse(m.server.seen.at(-1).body)
+
+  // the answer to the start says what is asked for, so the session's starting point is taken at the message
+  await play(m, HOOK.claude, [claude(id, 'SessionStart', { source: 'startup', cwd: repo }), claude(id, 'UserPromptSubmit', { prompt: 'add the refunds', cwd: repo })])
+  assert.deepEqual(JSON.parse(readFileSync(path.join(m.fm, 'share.json'), 'utf8')).usage, true)
+  assert.ok(!('lines' in sent()), 'lines are counted at the end of a turn only')
+
+  // the agent's work: a new file of five lines, committed, and a line taken out, not committed
+  writeFileSync(path.join(repo, 'b.txt'), '1\n2\n3\n4\n5\n')
+  gitIn(m, repo, 'add', 'b.txt')
+  gitIn(m, repo, 'commit', '-q', '-m', PRIVATE.words)
+  writeFileSync(path.join(repo, 'a.txt'), 'two\nthree\nfour\n')
+  await play(m, HOOK.claude, [claudeTool(id, 'PostToolUse', 'Edit')])
+  assert.deepEqual(sent().steps, { edit: 1 })
+  assert.equal((await statusLine(m, id, 0.25)).out, 'Opus · $0.25\n')
+
+  await play(m, HOOK.claude, [claude(id, 'Stop', { cwd: repo })])
+  assert.deepEqual(sent().lines, { added: 5, removed: 1, commits: 1 })
+  assert.deepEqual(sent().usage, { tokens: 0, cost: 0.25 })
+
+  // the cost grows; a message sends only the growth, and no lines
+  await statusLine(m, id, 0.4)
+  await play(m, HOOK.claude, [claude(id, 'UserPromptSubmit', { prompt: 'and the tests', cwd: repo })])
+  assert.ok(!('lines' in sent()))
+  assert.deepEqual(sent().usage, { tokens: 0, cost: 0.15 })
+
+  // a change undone and made again is not counted twice
+  writeFileSync(path.join(repo, 'a.txt'), 'one\ntwo\nthree\nfour\n')
+  await play(m, HOOK.claude, [claude(id, 'Stop', { cwd: repo })])
+  assert.ok(!('lines' in sent()) && !('usage' in sent()), JSON.stringify(sent()))
+  writeFileSync(path.join(repo, 'a.txt'), 'two\nthree\nfour\n')
+  writeFileSync(path.join(repo, 'c.txt'), 'x\n')
+  gitIn(m, repo, 'add', 'c.txt')
+  await play(m, HOOK.claude, [claude(id, 'UserPromptSubmit', { prompt: 'go on', cwd: repo }), claude(id, 'Stop', { cwd: repo })])
+  assert.deepEqual(sent().lines, { added: 1, removed: 0, commits: 0 })
+
+  // nothing of the repository is kept but the commit the session started from
+  const kept = allFiles(m.fm).map((file) => readFileSync(file, 'utf8')).join('\n')
+  for (const word of [repo, 'b.txt', PRIVATE.words]) assert.ok(!kept.includes(word), `kept: ${word}`)
+  checkPrivacy(m, [id], 'claude', true)
+
+  // signed out, or the key let go: the answer has no `share`, and nothing is counted from the next event on
+  m.server.answer = { listeners: 0 }
+  await play(m, HOOK.claude, [claude(id, 'UserPromptSubmit', { prompt: 'one more', cwd: repo })])
+  assert.deepEqual(JSON.parse(readFileSync(path.join(m.fm, 'share.json'), 'utf8')).lines, false)
+  const before = m.server.seen.length
+  assert.equal((await statusLine(m, id, 0.9)).out, 'Opus\n')
+  writeFileSync(path.join(repo, 'd.txt'), 'y\n')
+  await play(m, HOOK.claude, [claude(id, 'Stop', { cwd: repo })])
+  for (const request of m.server.seen.slice(before)) {
+    const body = JSON.parse(request.body)
+    assert.ok(!('lines' in body) && !('usage' in body), JSON.stringify(body))
+  }
+  checkPrivacy(m, [id], 'claude', true)
+  m.done()
+})
+
+await test('asked for: Cursor counts the lines in its workspace, which its end of a turn names', async () => {
+  const m = await machine()
+  const repo = repository(m)
+  m.server.answer = { listeners: 1, share: { lines: true, usage: false } }
+  mkdirSync(m.fm, { recursive: true })
+  writeFileSync(path.join(m.fm, 'share.json'), JSON.stringify({ lines: true, usage: false, at: 1 }))
+  const id = 'ab5e1100-0000-4000-8000-000000000022'
+  await play(m, HOOK.cursor, [cursor('beforeSubmitPrompt', id, { prompt: 'continue', workspace_roots: [repo] })])
+  writeFileSync(path.join(repo, 'b.txt'), '1\n2\n')
+  gitIn(m, repo, 'add', 'b.txt')
+  gitIn(m, repo, 'commit', '-q', '-m', 'second')
+  await play(m, HOOK.cursor, [cursor('stop', id, { status: 'completed', workspace_roots: [repo] })])
+  assert.deepEqual(JSON.parse(m.server.seen.at(-1).body).lines, { added: 2, removed: 0, commits: 1 })
+  checkPrivacy(m, [id], 'cursor', true)
+  m.done()
+})
+
+await test('outside a repository, or with git too slow or missing, no lines are sent', async () => {
+  const m = await machine()
+  m.server.answer = { listeners: 1, share: { lines: true, usage: false } }
+  mkdirSync(m.fm, { recursive: true })
+  writeFileSync(path.join(m.fm, 'share.json'), JSON.stringify({ lines: true, usage: false, at: 1 }))
+  const plain = path.join(m.home, 'not-a-repo')
+  mkdirSync(plain)
+  const id = 'ab5e1100-0000-4000-8000-000000000023'
+  await play(m, HOOK.claude, [claude(id, 'UserPromptSubmit', { prompt: 'go', cwd: plain }), claude(id, 'Stop', { cwd: plain })])
+  const missing = { ...m.env, PATH: path.join(m.home, 'no-bin') }
+  await play({ ...m, env: missing }, HOOK.claude, [claude('s-2', 'UserPromptSubmit', { prompt: 'go', cwd: plain }), claude('s-2', 'Stop', { cwd: plain })])
+  for (const request of m.server.seen) assert.ok(!('lines' in JSON.parse(request.body)))
+  checkPrivacy(m, [id], 'claude', true)
+  m.done()
+})
+
+await test('the status line installs itself beside the key, and says what to add to the settings', async () => {
+  const m = await machine()
+  const result = await run(STATUSLINE, ['--install'], '', m.env)
+  assert.equal(result.code, 0, result.err)
+  const target = path.join(m.fm, 'statusline.mjs')
+  assert.equal(readFileSync(target, 'utf8'), readFileSync(STATUSLINE, 'utf8'))
+  const setting = JSON.parse(result.out.slice(result.out.indexOf('{')))
+  assert.deepEqual(setting, { statusLine: { type: 'command', command: `node "${target}"` } })
+  assert.ok(!existsSync(path.join(m.home, '.claude')), 'the settings are not touched')
+  // the copy works from where it was put
+  mkdirSync(m.fm, { recursive: true })
+  writeFileSync(path.join(m.fm, 'share.json'), JSON.stringify({ lines: false, usage: true, at: 1 }))
+  const shown = await run(target, [], { session_id: 's-1', model: { display_name: 'Sonnet' }, cost: { total_cost_usd: 1.5 } }, m.env)
+  assert.equal(shown.out, 'Sonnet · $1.50\n')
+  assert.deepEqual(readdirSync(path.join(m.fm, 'usage')).length, 1)
+  const garbage = await run(target, [], 'not json', m.env)
+  assert.deepEqual([garbage.code, garbage.out, garbage.err], [0, 'Claude\n', ''])
+  m.done()
+})
+
+await test('OpenClaw: the plugin passes on a turn\'s tokens and cost once, and nothing of the reply', async () => {
+  const { listen } = await import(path.join(ROOT, 'integrations/openclaw/index.js'))
+  const { api, hook } = openclawApi()
+  const sent = []
+  listen(api, (event) => sent.push(event))
+  const key = 'agent:main:telegram:direct:12345678'
+  const reply = (kind, runId, usageState) => hook('reply_payload_sending', { payload: { text: PRIVATE.reply }, kind, channel: 'telegram', sessionKey: key, runId, usageState }, { channelId: 'telegram', sessionKey: key })
+  const state = { provider: 'anthropic', model: PRIVATE.words, sessionId: 'uuid-1', usage: { input: 1000, output: 234, total: 1234 }, turnUsd: 0.0123, identity: { name: PRIVATE.email } }
+  reply('block', 'run-1', state)
+  reply('final', 'run-1', state)
+  reply('final', 'run-1', state)
+  // no cost table: tokens only
+  reply('final', 'run-2', { usage: { total: 50 } })
+  // a replay, with nothing to count
+  reply('final', 'run-3', undefined)
+  hook('reply_payload_sending', null, null)
+  assert.deepEqual(sent, [
+    { session_id: key, hook_event_name: 'usage', tokens: 1234, cost: 0.0123 },
+    { session_id: key, hook_event_name: 'usage', tokens: 50 },
+  ])
+  const wire = JSON.stringify(sent)
+  for (const secret of SECRETS) assert.ok(!wire.includes(secret), `passed on: ${secret}`)
+})
+
+for (const asked of [true, false]) {
+  await test(`OpenClaw: a turn's usage is sent with the next report ${asked ? 'when asked for' : 'only when asked for'}`, async () => {
+    const m = await machine()
+    m.server.answer = asked ? { listeners: 1, share: { lines: false, usage: true } } : { listeners: 1, share: { lines: false, usage: false } }
+    mkdirSync(m.fm, { recursive: true })
+    writeFileSync(path.join(m.fm, 'share.json'), JSON.stringify({ lines: false, usage: asked, at: 1 }))
+    const key = 'agent:main:main'
+    const event = (hook_event_name, more = {}) => [[], { session_id: key, hook_event_name, ...more }]
+    await play(m, HOOK.openclaw, [
+      // usage for a conversation never heard of opens nothing
+      [[], { session_id: 'agent:main:other', hook_event_name: 'usage', tokens: 5, cost: 1 }],
+      event('run_start'),
+      event('usage', { tokens: 1234, cost: 0.0123 }),
+      event('usage', { tokens: 66 }),
+      event('run_end'),
+    ])
+    const bodies = m.server.seen.map((request) => JSON.parse(request.body))
+    assert.equal(bodies.length, 2)
+    assert.deepEqual(bodies.at(-1).usage, asked ? { tokens: 1300, cost: 0.0123 } : undefined)
+    checkPrivacy(m, [key], 'openclaw', asked)
+    m.done()
+  })
+}
 
 // ------------------------------------------------------------ the computer's name
 

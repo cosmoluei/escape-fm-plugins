@@ -13,6 +13,8 @@ export const PLAYER = (process.env.ESCAPE_FM_PLAYER ?? 'https://escape.fm').repl
 /** Shared by every escape.fm integration on this machine, so they all reach the same player. */
 export const HOME = process.env.ESCAPE_FM_HOME ?? path.join(homedir(), '.escape-fm')
 const CONFIG = path.join(HOME, 'config.json')
+/** What the listener asked this machine's plugins to count beside the tags; the relay says so in every answer. */
+const SHARE = path.join(HOME, 'share.json')
 /**
  * Every report says openly which integration sent it and which version, so the relay can
  * count them apart (docs/analytics.md). Nothing about the machine or the listener is in it;
@@ -77,20 +79,49 @@ export function openBrowser(url) {
   }
 }
 
+/**
+ * Which of the counts that are only sent when asked for the listener has switched on, on their page
+ * in escape.fm ("Lines of code", "Tokens and cost"): as the relay last said. Off until it says so.
+ * @returns {{ lines: boolean, usage: boolean }}
+ */
+export function readShare() {
+  const share = readJson(SHARE, null)
+  return { lines: share?.lines === true, usage: share?.usage === true }
+}
+
+/**
+ * Keeps what the relay's answer says was asked for (docs/integrations.md, "Asked for"). An answer
+ * from a key no account has claimed has no `share`, and nothing is asked for then. A request that
+ * failed, or anything that is not the relay's answer, changes nothing. Written only when it changed.
+ */
+function noteShare(reply) {
+  if (!reply || typeof reply !== 'object' || typeof reply.listeners !== 'number') return
+  const asked = reply.share && typeof reply.share === 'object' ? reply.share : {}
+  const share = { lines: asked.lines === true, usage: asked.usage === true }
+  const kept = readJson(SHARE, null)
+  if (kept?.lines === share.lines && kept?.usage === share.usage) return
+  try {
+    writeJson(SHARE, { ...share, at: Date.now() })
+  } catch {
+    // the next answer tries again
+  }
+}
+
 const quote = (value) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 
 /**
  * POST the tags. curl goes first because it honours proxy settings from the
  * environment, which Node's fetch does not; the request is passed on stdin so the
  * key never shows up in the process list.
- * @returns {Promise<object | null>} the relay's answer, or null if it could not be reached
+ * @returns {Promise<object | null>} the relay's answer, or null if it could not be reached. What the
+ *   answer says the listener asked to have counted is kept in share.json (`readShare`).
  */
 export function post(config, body, timeout = 4) {
   const url = `${API}/v1/signal`
   const payload = JSON.stringify(body)
   return new Promise((resolve) => {
     const curl = execFile('curl', ['--config', '-'], { timeout: (timeout + 1) * 1000 }, async (error, stdout) => {
-      if (!error) return resolve(readParsed(stdout))
+      if (!error) return resolve(answered(readParsed(stdout)))
       if (error.code !== 'ENOENT') return resolve(null)
       // no curl on this machine
       try {
@@ -100,7 +131,8 @@ export function post(config, body, timeout = 4) {
           body: payload,
           signal: AbortSignal.timeout(timeout * 1000),
         })
-        resolve(await res.json())
+        const reply = await res.json()
+        resolve(res.ok ? answered(reply) : reply)
       } catch {
         resolve(null)
       }
@@ -139,6 +171,12 @@ export function postDetached(body) {
   } catch {
     // nothing to be done about it, and nobody to tell
   }
+}
+
+/** The relay's answer, once what it says was asked for is kept. */
+function answered(reply) {
+  noteShare(reply)
+  return reply
 }
 
 function readParsed(text) {

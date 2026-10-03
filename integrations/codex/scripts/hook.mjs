@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Runs on Codex hook events and reports two tags for this session: the work mode
-// and the agent state. That, a random session id and a timestamp are everything
-// that leaves the machine. See README.md.
+// and the agent state, how many of the agent's steps there were of each kind, and,
+// only when the listener has asked for them, the lines of code of the session's work.
+// That, a random session id and a timestamp are everything that leaves the machine.
+// See README.md.
 //
 // This file is the Codex part: which of its events mean what. The rest is shared
 // with the other agents' integrations (session.mjs, classify.mjs, lib.mjs).
@@ -9,12 +11,18 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stepOf } from './classify.mjs'
 import { report, welcome } from './session.mjs'
 
-/** Codex edits files with one tool. It reads them with shell commands, which are not looked into, so no tool counts as reading. */
+/**
+ * Codex edits files with one tool. It reads them with shell commands, whose command is looked at
+ * only to tell a test run or a commit, so no tool counts as reading.
+ */
 const EDIT = new Set(['apply_patch'])
 /** Tools that are the agent asking the listener something. */
 const ASK = new Set(['request_user_input', 'request_permissions'])
+/** The shell. Its command comes as a string, or as the list of a program's arguments. */
+const SHELL = new Set(['Bash'])
 /**
  * The end of a turn and of a session: their reports are handed to a process of their own
  * and the hook returns at once. Codex gives Interrupt and SessionEnd three seconds at most,
@@ -23,8 +31,21 @@ const ASK = new Set(['request_user_input', 'request_permissions'])
  */
 const HURRIED = new Set(['Stop', 'Interrupt', 'SessionEnd'])
 
-/** Only the name of a tool is looked at, never what it is given or what it returns. */
+/**
+ * Of a tool, only its name is looked at, and for the shell its command, here and only to tell a test
+ * run or a commit from any other command (`stepOf` in classify.mjs); nothing of either leaves the
+ * machine, only the kind of step. What a tool is given otherwise, and what it returns, is not read.
+ */
 const kindOf = (name) => (ASK.has(name) ? 'ask' : EDIT.has(name) ? 'edit' : 'other')
+
+function commandOf(input) {
+  if (!SHELL.has(input.tool_name)) return undefined
+  const command = input.tool_input?.command
+  return Array.isArray(command) ? command.map(String).join(' ') : String(command ?? '')
+}
+
+/** A finished tool's kind of step: for the shell, from its command, which goes no further. */
+const stepFor = (input) => stepOf(kindOf(input.tool_name), commandOf(input))
 
 /** @returns {import('./session.mjs').Step | null} */
 function toStep(input) {
@@ -41,7 +62,8 @@ function toStep(input) {
     case 'PreToolUse':
       return { id, kind: 'tool', tool: kindOf(input.tool_name) }
     case 'PostToolUse':
-      return { id, kind: 'running' }
+      // no outcome (README.md), but a step: Codex runs this for every tool that finished, failed or not
+      return { id, kind: 'running', step: stepFor(input) }
     case 'PermissionRequest':
       return { id, kind: 'waiting' }
     case 'Stop':
@@ -59,6 +81,8 @@ async function main() {
   const input = JSON.parse(readFileSync(0, 'utf8'))
   const step = input.session_id ? toStep(input) : null
   if (!step) return
+  // where git counts the lines of code, when the listener has asked for them; never sent
+  if (typeof input.cwd === 'string') step.cwd = input.cwd
 
   const first = await report(step, { detach: HURRIED.has(input.hook_event_name) })
   if (first) {

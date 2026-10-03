@@ -3,10 +3,11 @@
 //
 // OpenClaw has no hooks that run a command; a plugin subscribes to its events in-process. This file
 // only listens: it returns nothing to any hook, so it cannot allow, block or change anything, and it
-// reads no message, prompt, tool input or result. Of each event it keeps the conversation's key (to
-// tell conversations apart; scripts/hook.mjs sends only a digest of it), the run's id, a tool's name,
-// whether a tool failed, and whether an approval is pending, and hands that to scripts/hook.mjs, one
-// event at a time, in a process of its own, as every other integration's agent does.
+// reads no message, prompt, reply, tool input or result. Of each event it keeps the conversation's key
+// (to tell conversations apart; scripts/hook.mjs sends only a digest of it), the run's id, a tool's
+// name, whether a tool failed, whether an approval is pending, and a turn's tokens and cost, and hands
+// that to scripts/hook.mjs, one event at a time, in a process of its own, as every other
+// integration's agent does. The tokens and cost go further only if the listener has asked for them.
 
 import { spawn } from 'node:child_process'
 import path from 'node:path'
@@ -53,7 +54,8 @@ const text = (value) => (typeof value === 'string' && value ? value : undefined)
 
 /**
  * Subscribes to OpenClaw's events. `send` is given objects in the shape scripts/hook.mjs reads:
- * `session_id` (the conversation's key), `hook_event_name`, and for a tool its name and whether it failed.
+ * `session_id` (the conversation's key), `hook_event_name`, for a tool its name and whether it failed,
+ * and for a turn's `usage` its `tokens` and `cost`.
  * Every handler returns nothing and never throws, so it changes nothing and holds nothing up.
  */
 export function listen(api, send = forwarder()) {
@@ -112,6 +114,34 @@ export function listen(api, send = forwarder()) {
       // OpenClaw 2026.3: a command that needs the owner's approval returns at once, saying so
       if (event?.result?.details?.status === 'approval-pending') return approval(key, text(event.result.details.approvalId), true)
       emit(key, 'tool_end', { tool_name: text(event?.toolName) ?? text(ctx?.toolName), failed: event?.error !== undefined && event?.error !== null })
+    }),
+  )
+
+  // A reply going out carries what its turn used (`usageState`), beside the reply itself (`payload`),
+  // which is not read. Only two numbers are taken: the tokens the turn's calls to the model used
+  // (`usage.total`) and its cost in US dollars (`turnUsd`, only when OpenClaw has a cost table). A turn
+  // sends several payloads with the same totals, so a turn is counted once, at its final one.
+  /** runs whose usage has been passed on, the latest few */
+  const counted = []
+  api.on(
+    'reply_payload_sending',
+    safely((event, ctx) => {
+      if (event?.kind !== 'final') return
+      const state = event?.usageState
+      if (!state || typeof state !== 'object') return
+      const run = text(event?.runId)
+      if (run) {
+        if (counted.includes(run)) return
+        counted.push(run)
+        if (counted.length > 32) counted.shift()
+      }
+      const tokens = state.usage?.total
+      const cost = state.turnUsd
+      const usage = {
+        ...(Number.isFinite(tokens) && tokens > 0 ? { tokens } : {}),
+        ...(Number.isFinite(cost) && cost > 0 ? { cost } : {}),
+      }
+      if (Object.keys(usage).length) emit(keyOf(event, ctx), 'usage', usage)
     }),
   )
 

@@ -19,7 +19,9 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const SHARED = 'shared'
 /** What a hook script runs on. */
-const RUNTIME = ['classify.mjs', 'lib.mjs', 'computer.mjs', 'session.mjs', 'send.mjs', 'open.mjs']
+const RUNTIME = ['classify.mjs', 'lib.mjs', 'computer.mjs', 'lines.mjs', 'session.mjs', 'send.mjs', 'open.mjs']
+// plugin/scripts/statusline.mjs is not among them: it is Claude Code's alone (its status line), and
+// written there, not copied.
 /** What install.mjs runs on, for the agents that can be set up by hand. */
 const SETUP = ['setup.mjs']
 

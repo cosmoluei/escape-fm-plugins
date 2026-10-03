@@ -16,25 +16,34 @@ Per conversation, on hook events:
 | `ts` | `1790765086341` | When the event happened |
 | `computer` | `Ada's MacBook Pro` | This computer's name as you see it in your system settings (macOS: Computer Name; Windows and Linux: the host name), so your page can list it by name. Set `ESCAPE_FM_COMPUTER_NAME` to change it, or to an empty value to send none |
 | `outcomes` | `[true, false]` | Whether each of the agent's steps since the last report succeeded or failed, oldest first: a command, an edit or an MCP tool, from whether Cursor reports it as failed (`postToolUseFailure`). Never what the step was. Left out when there are none |
+| `steps` | `{"edit": 3, "test": 1}` | How many of the agent's steps since the last report were of each kind: `edit`, `command`, `test`, `search` (reading), `commit` or `other`, counted when a tool finishes. A command run in the shell (`Shell`) is told apart as a test run or a commit from its command, on this machine; the command itself is never sent or kept. Left out when there were none |
+| `lines` | `{"added": 120, "removed": 14, "commits": 1}` | **Only if you have switched on "Lines of code" on your page in escape.fm.** At the end of a turn, the lines added and removed and the commits made since the last report, counted with git in the folder you work in (the first workspace folder). Never a file name, a commit message or a diff |
 
 And one request header, the same on every report:
 
 | Header | Example | What it is |
 | --- | --- | --- |
-| `User-Agent` | `escape-fm/0.5.0 (cursor)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
+| `User-Agent` | `escape-fm/0.6.0 (cursor)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
 
 From it the relay counts, once a day for each paired machine, that this integration
 reported and how many reports it sent, with the country Cloudflare places the request
 in (never the address). Those counts are all that is kept. How it is done is in [docs/analytics.md](../../docs/analytics.md).
 
+`lines` and `usage` are off until you switch them on, on your page in escape.fm ("Lines of
+code", "Tokens and cost", under the history section). escape.fm's answer to each report says
+which are on, and the plugin keeps that in `~/.escape-fm/share.json`; while one is off, nothing
+of it is counted, kept or sent (for lines, git is not even run). Cursor tells a hook nothing of tokens or cost, so it sends no `usage`.
+
 Nothing else. Your prompt is read locally to choose the work mode
 ([`scripts/classify.mjs`](scripts/classify.mjs), a short keyword list you can read
-in a minute) and is never sent, stored or logged. Tool inputs, commands, file names,
-paths, outputs and error messages are not read at all; only tool names are, and they
-stay local. Whether a step failed is told by which event Cursor runs, and whether it
+in a minute) and is never sent, stored or logged. Tool inputs, file names, paths,
+outputs and error messages are not read at all; only tool names are, and of `Shell` its
+command, only to tell a test run or a commit from any other command
+([`scripts/classify.mjs`](scripts/classify.mjs), `stepOf`). They stay local. Whether a step failed is told by which event Cursor runs, and whether it
 was denied by its failure type, not by anything the tool returned.
 Cursor also hands every hook your account's email address, the workspace folders and
-the transcript's path; none of them is looked at.
+the transcript's path; none of them is looked at, except the folder, to run git there
+when you have switched on "Lines of code".
 
 The hooks never answer Cursor. They print nothing, so they cannot allow, deny or
 change anything the agent does.

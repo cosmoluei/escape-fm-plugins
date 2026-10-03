@@ -46,6 +46,13 @@ listener key as a bearer token, and nothing else:
 | `ts` | When the event happened |
 | `computer` | This computer's name as its owner sees it in the system settings, so the account's page can list the machine by name (below). Left out when there is none |
 | `outcomes` | Whether each of the agent's steps since the last report went through: `true` or `false`, oldest first, at most 32 ("Outcomes", below). Left out when there are none |
+| `steps` | How many of the agent's steps since the last report were of each kind: `{ edit, command, test, search, commit, other }`, whole numbers, only the kinds there were any of ("Steps", below). Left out when there were none. Since 0.6.0 |
+| `lines` | Only when the listener has asked for it: `{ added, removed, commits }`, what the session added in git in its folder since the last report, sent at the end of a turn ("Asked for: lines and usage", below). Since 0.6.0 |
+| `usage` | Only when the listener has asked for it: `{ tokens, cost }`, the session's tokens and cost in US dollars since the last report, from the agents that can tell ("Asked for: lines and usage"). Since 0.6.0 |
+
+The relay answers a report with `{ listeners }`, and, for a key an account has claimed, with
+`share: { lines, usage }` too: which of the two the listener has asked for. The plugin keeps that
+answer (below) and sends `lines` and `usage` only while it says yes.
 
 When a session ends the last report is `session`, `ts` and `end: true` instead, and the
 relay removes the session at once. With none left open, the relay keeps when the last one
@@ -90,6 +97,107 @@ its output, nor a digest of any of them.
 - The relay keeps a task's outcomes of the last 12 minutes (at most 48), stamped with when the report
   came, for as long as the task, and tells players only `steadyUntil`, until when to hold the music
   steadier (`api/src/outcomes.ts`). The account's export lists them.
+
+### Steps
+
+Decided on 2026-10-02 (owner-approved for 0.6.0): a report also says how many of the agent's steps
+since the last one were of each kind, so the listener's page can show the day's work by kind
+(docs/history.md) without anything of what the work was.
+
+- A **step** is counted when a tool **finishes**, whether it went through or failed (Claude Code's
+  `PostToolUse` and `PostToolUseFailure`, and each agent's like events). A tool the listener stopped
+  or would not allow is no step, as it is no outcome. Asking the listener is no step.
+- Its kind, decided on this machine by `stepOf` in `shared/classify.mjs`: an edit is `edit`; reading
+  and searching (the tools a hook script counts as reading) are `search`; the agent's **shell** is
+  `test` when its command runs a test runner, `commit` when it runs `git commit`, and `command`
+  otherwise; any other tool (MCP tools, subagents, a to-do list) is `other`.
+- For the shell, and only for it, the hook script hands `stepOf` the command, which looks at it
+  there and then and keeps nothing of it: each command of the line (split at `&&`, `||`, `;`, `|`),
+  without what wraps it (`bash -lc`, `sudo`, `cd x &&`, `FOO=1`), is matched against a short list of
+  test runners (`npm test` and the like, `npx vitest`, `pytest`, `go test`, `cargo test`,
+  `swift test`, `xcodebuild … test`, `mvn test`, `gradle test`, `rspec`, `make test`, `node --test`,
+  …) and against `git commit` (also `git -C dir commit`). A line that commits is a commit, whatever
+  it ran first. The command is never sent, kept, logged or digested; only the kind leaves.
+- The counts are kept in the session's state file and go with the next report, like the outcomes,
+  which they do not hasten; a session that ends drops the ones not yet sent. The relay takes at
+  most 1000 of each kind from one report.
+- Which tool is each agent's shell, and where its command is: the agents' sections and the table
+  under "Asked for: lines and usage".
+
+### Asked for: lines and usage
+
+Two counts are sent only when the listener has asked for them, each with its own switch, off by
+default: **lines of code** and **tokens and cost**. The listener switches them on on their page in
+escape.fm ("Lines of code", "Tokens and cost", under the history section). The relay keeps the two
+per account and says what they are in its answer to every report from a key the account has
+claimed, `share: { lines, usage }`; the answer to an unclaimed key has none.
+
+- **The switch reaches the plugin by the relay's answer.** `post()` in `shared/lib.mjs` (run in the
+  hook's own process or in `send.mjs`) writes `~/.escape-fm/share.json`, `{ lines, usage, at }`,
+  when an answer says something other than what is there; an answer with no `share` (signed out,
+  the key let go) writes both `false`. A request that fails changes nothing. `session.mjs` reads the
+  file at each event (missing is both off), so a switch takes effect from the event after the next
+  answer.
+- While `lines` is off, git is not run and nothing is kept; while `usage` is off, the status line's
+  file is not read and what an agent said it used is dropped. So neither is sent while off, and the
+  relay refuses to keep either from a report that carries it while the switch is off.
+- **Lines** are counted with git in the session's folder (the event's `cwd` where the agent gives
+  one, otherwise the hook's working folder; passed to `session.mjs` as `step.cwd`, never sent or
+  kept). At the first event of a session on which the switch is on, the starting point is taken:
+  `git rev-parse HEAD`, and the totals of `git diff --shortstat HEAD`, the changes already there
+  that are not the session's. At the end of each turn (`stop`) only, and at no other event:
+  `git diff --shortstat <start>` (the working tree against that commit: the commits since and what
+  is not committed yet) less those first totals, floored at 0, and `git rev-list --count
+  <start>..HEAD` for the commits. Only growth is sent: the highest of each so far is kept, and a
+  report carries what went past it, so a change undone and made again is not counted twice. Every
+  git call has a two-second limit, runs with `--no-optional-locks` (so it never takes a lock the
+  agent's own git needs) and an argument list, never a shell; not a repository, no commit yet, git
+  missing or too slow, and nothing is sent. Files git does not track yet are not counted. Nothing
+  of a file name, a commit message or a diff is read into the process; the starting commit's hash
+  is kept in the session's state file and goes nowhere else. Switched off, the starting point goes
+  too, so turning it on again starts afresh.
+- **Usage** is the tokens (a whole number) and the cost in US dollars since the last report. No
+  agent's hooks carry a session's usage apart from its conversation (researched on 2026-10-03), so
+  only two sources are used: Claude Code's status line, which the listener sets up, and OpenClaw's
+  `reply_payload_sending` hook. Usage kept for the next report is sent with it, like the outcomes.
+
+Read on 2026-10-03, from the documentation linked:
+
+| Agent | Steps by kind | Lines | Tokens and cost |
+| --- | --- | --- | --- |
+| Claude Code | all six; shell `Bash` (`tool_input.command`) | yes, `cwd` | **cost only**, from its [status line](https://code.claude.com/docs/en/statusline) once the listener sets it up (below); its tokens there are only the last answer's |
+| Codex | all but `search` (it reads with shell commands); shell `Bash`, `tool_input.command` a string or a list of arguments | yes, `cwd` | nothing: its token counts are only in its rollout file, which holds the conversation ([hooks](https://learn.chatgpt.com/docs/hooks)) |
+| Cursor | all six; shell `Shell` (`tool_input.command`) | yes, `cwd`, or the first of `workspace_roots` | nothing: no hook carries usage ([hooks](https://cursor.com/docs/hooks)) |
+| Gemini CLI | all six; shell `run_shell_command` (`tool_input.command`) | yes, `cwd` | nothing: `AfterModel` carries `usageMetadata`, but in the same payload as the conversation, so it is not read ([hooks reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md)) |
+| Copilot CLI | all six; shell `bash` or `powershell` (`command` in `toolArgs`, a JSON string, or `tool_input.command`) | yes, `cwd` | nothing: usage is only in its OpenTelemetry export ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)) |
+| Qwen Code | all six; shell `run_shell_command` (`tool_input.command`) | yes, `cwd` | nothing: its status line has the session's tokens, but a plugin cannot set one up, and it is not used ([hooks](https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/hooks.md)) |
+| Droid | all six; shell `Execute` (`tool_input.command`) | yes, `cwd` | nothing ([hooks reference](https://github.com/Factory-AI/factory/blob/main/docs/reference/hooks-reference.mdx)) |
+| CodeBuddy Code, WorkBuddy | all six; shell `Bash` (`tool_input.command`) | yes, `cwd` | nothing yet: its status line has a cost as Claude Code's does ([settings](https://www.codebuddy.cn/docs/cli/settings)), not used yet |
+| Muse Code | all six; shell `bash` or `powershell` (`tool_input.command`) | yes, `cwd` | nothing: not documented ([hook events](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/reference/hook-events/)) |
+| OpenClaw | `edit`, `search`, `command`, `other`: the plugin never reads a tool's input, so `exec` and `bash` are a `command`, never a test run or a commit | yes, in the gateway's working folder (no event names a folder) | **tokens, and cost when OpenClaw has a cost table**, from `reply_payload_sending` (`src/plugins/hook-types.ts` on `main`) |
+
+**Claude Code's status line.** A plugin cannot ship one (a plugin's `settings.json` honours only
+`agent` and `subagentStatusLine`), so `plugin/scripts/statusline.mjs` is set up by the listener, and
+only by one who wants tokens and cost counted: `node <plugin>/scripts/statusline.mjs --install`
+copies it to `~/.escape-fm/statusline.mjs` (it imports nothing of the plugin's, which is updated in
+place) and prints the setting to add to `~/.claude/settings.json`,
+`{ "statusLine": { "type": "command", "command": "node \"…/statusline.mjs\"" } }`; it edits no
+settings itself, and the setting replaces any status line the listener had. Claude Code runs it after
+each answer with the session's state on stdin, of which it reads `session_id`,
+`cost.total_cost_usd` (the session's total so far, Claude Code's own estimate, which starts again
+at `/clear`) and `model.display_name`, and prints `Opus · $0.42`, or only the model's name while
+usage is off. While usage is on it writes `~/.escape-fm/usage/<session>.json`, `{ cost, at }`, under
+the digest the plugin knows the session by, when the total changed. `session.mjs` reads it at each
+report while usage is on and sends the growth since the total it last sent (a total that goes down
+has started again); the file goes when the session ends. When usage is switched on in the middle of
+a session, the first report after carries the session's cost so far.
+
+**OpenClaw's turns.** `reply_payload_sending` runs for each payload of a reply going out, with the
+reply (`payload`, never read) and, on live delivery, `usageState`: the turn's tokens summed over its
+calls to the model (`usage.total`) and its cost (`turnUsd`, only with a cost table). The plugin takes
+those two numbers once a turn, at its `final` payload and once for each run id, and hands them to
+`scripts/hook.mjs` as a `usage` event, which adds them to the session's usage for the next report
+while usage is on and drops them while it is off. It opens no session not otherwise heard of.
 
 ### The computer's name
 
@@ -160,12 +268,14 @@ shared/                 the code every integration runs, written once
   classify.mjs          prompt -> work mode
   lib.mjs               the key, the transport, opening the player
   computer.mjs          this computer's name, kept a day in ~/.escape-fm/computer.json
+  lines.mjs             lines of code from git, when the listener asked for them
   session.mjs           a session's two tags between hook runs; what to report and when
   send.mjs              posts one report from a process of its own
   open.mjs              opens the player paired with this machine
   setup.mjs             adds hooks to an agent's hooks.json or settings.json by hand
                         (each integration also gets a client.mjs: its name and version, from its manifest)
-plugin/                 Claude Code (a Claude Code plugin, as before)
+plugin/                 Claude Code (a Claude Code plugin, as before; scripts/statusline.mjs,
+                        its status line, is its own and not a copy)
 integrations/codex/     Codex (a Codex plugin, and install.mjs)
 integrations/cursor/    Cursor (a Cursor plugin, and install.mjs)
 integrations/gemini/    Gemini CLI (a Gemini CLI extension, and install.mjs)
@@ -184,7 +294,9 @@ scripts/test-integrations.mjs   feeds each hook script its agent's events
 Each integration's own `scripts/hook.mjs` is small: it says which of its agent's events
 is which step (`start`, `prompt`, `tool`, `running`, `waiting`, `stop`, `end`) and how
 that agent names its tools. It passes `session.mjs` the session id, the step and, for a
-prompt, the text. Nothing else of an event goes any further than that one function.
+prompt, the text; for a finished tool the kind of step (from its shell's command, looked at
+in `stepOf` and no further); and the session's folder, for git. Nothing else of an event goes
+any further than that one function.
 
 **Why copies.** An agent installs an integration by copying its folder: Claude Code
 and Codex into a plugin cache, Cursor from `~/.cursor/plugins/local`, `install.mjs`
@@ -403,7 +515,9 @@ Two things here are **not as documented**, and both were seen:
   (`core/src/tools/registry.rs` and `context.rs` on `main`, read on 2026-10-02). So Codex
   sends no outcomes. Telling a failed patch by the `PostToolUse` that never comes was
   considered and left out: the hooks run as parallel background processes, so a late
-  `PostToolUse` would read as a failure.
+  `PostToolUse` would read as a failure. Its steps are counted all the same: `PostToolUse`
+  runs for every tool that finished, failed or not (a patch that does not apply is not
+  counted).
 - **After an approval is answered**, nothing runs until the tool finishes, as with
   Claude Code: a long approved command shows as `waiting` until it ends. **Seen**: a
   three-second command approved after three seconds showed `waiting` for six.
@@ -413,7 +527,10 @@ Two things here are **not as documented**, and both were seen:
 - **Hosted tools** (web search) run no tool hooks, so a turn that only searches shows
   as `user` until it stops.
 - **Reading** cannot be told from the tool name: Codex reads files with shell
-  commands, and a command is not looked into.
+  commands, and a command is looked at only to tell a test run or a commit, so reading
+  is counted as a `command` step and never as `search`.
+- **Tokens and cost**: no hook carries them. Codex keeps its token counts in the
+  session's rollout file, beside the conversation, which is not read.
 - **Cloud tasks** do not run hooks from local configuration.
 
 ## Cursor
@@ -502,6 +619,7 @@ subagent, compaction, `beforeSubmitPrompt`, `afterAgentThought` and
   the state is the same without them.
 - **Cloud agents** load project hooks only, and run neither `sessionStart` nor
   `sessionEnd`. With the hooks in `~/.cursor/hooks.json` they are not heard at all.
+- **Tokens and cost**: no hook carries them.
 
 ## Gemini CLI
 
@@ -564,6 +682,8 @@ from settings (from source), and an extension's it runs anyway.
   completes. The session keeps its state until the next message.
 - **Whether a tool is running or waiting for approval**: `BeforeTool` runs before the
   approval, `Notification` when the prompt shows, and nothing when it is answered.
+- **Tokens and cost**: `AfterModel` carries `usageMetadata`, but with the request and the
+  response, the conversation itself, so it is not subscribed to.
 
 ## GitHub Copilot CLI
 
@@ -625,6 +745,7 @@ servers), so the plugin is offered as untried.
 - `copilot -p` runs `sessionEnd` after every prompt (1.0.78), so each prompt is a session.
 - **VS Code reads the same `~/.copilot/hooks`** but runs its own PascalCase events with its
   own payloads; whether it runs camelCase entries is not documented.
+- **Tokens and cost**: only in its OpenTelemetry export, not to hooks.
 
 ## Qwen Code
 
@@ -682,6 +803,8 @@ was not confirmed, so the extension is offered as untried.
 - **An interrupted turn** runs no hook; a tool that was running ends in
   `PostToolUseFailure` with `is_interrupt`, which is no outcome.
 - A `-p` run may end without `SessionEnd` (not documented either way).
+- **Tokens and cost**: its status line is given the session's tokens, but a plugin cannot set
+  one up, and none is offered.
 
 ## Factory Droid
 
@@ -724,6 +847,8 @@ Sources, read on 2026-10-02:
   (the newer page says "completes"), there is no failure event, and `tool_response`'s
   shape is not documented beyond a file tool's `success: true`. So Droid sends no outcomes.
 - **A failed turn** has no event.
+- **Tokens and cost**: no hook carries them. Its steps are counted all the same, from
+  `PostToolUse`.
 
 ## CodeBuddy Code and WorkBuddy
 
@@ -796,6 +921,8 @@ against 2.156.0.
 - **WorkBuddy's own tools** for office work are not documented by name: they count as steps, and
   play no part in choosing the work mode.
 - After an approval is answered, nothing runs until the tool finishes.
+- **Tokens and cost**: no hook carries them. CodeBuddy Code's status line is given a cost as
+  Claude Code's is; a status line for it, as for Claude Code, is not written yet.
 
 ## Muse Code
 
@@ -861,6 +988,7 @@ Sources, read on 2026-10-02 (Muse Code 1.4.2; the SDK pages are checked against 
   an older version does not know might not load at all, so it is not used yet.
 - **Whether a shell command that exits non-zero is a failed tool call** is not documented.
 - After an approval is answered, nothing runs until the tool finishes.
+- **Tokens and cost**: no hook is documented as carrying them, so nothing.
 
 ## OpenClaw
 
@@ -889,7 +1017,9 @@ package.
   handler in `~/.openclaw/hooks/`) are of the same kind and add nothing needed here.
 - Typed hooks used, none of which needs a grant: `message_received` (fire and forget),
   `before_tool_call` (waited for; the handler returns nothing and at once), `after_tool_call`
-  (`toolName`, `error` when the result is an error, `durationMs`), `session_end`, `gateway_start`.
+  (`toolName`, `error` when the result is an error, `durationMs`), `session_end`, `gateway_start`,
+  and since 0.6.0 `reply_payload_sending`, of which only `kind`, `runId` and two numbers of
+  `usageState` are read ("Asked for: lines and usage").
   Not used: `agent_end`, `before_agent_run`, `llm_input` and `llm_output` carry the conversation
   and, in newer versions, need `plugins.entries.<id>.hooks.allowConversationAccess`, which a
   2026.3 configuration does not accept at all.
@@ -912,9 +1042,10 @@ package.
   `scripts/hook.mjs` on a process of its own, one after another so the session's file is written
   in order, with at most 64 waiting; the hook script reports as every other one does.
 - Only what is needed crosses: the conversation's key (sent only as its digest), the event, a
-  tool's name, whether it failed. The plugin never reads a message, a prompt, a reply, a tool's
-  input or result (but whether it is an error, and in 2026.3 whether it says `approval-pending`).
-  So the work mode comes from the tools alone.
+  tool's name, whether it failed, and a turn's tokens and cost. The plugin never reads a message, a
+  prompt, a reply, a tool's input or result (but whether it is an error, and in 2026.3 whether it
+  says `approval-pending`). So the work mode comes from the tools alone, and a shell command is a
+  `command` step, never a test run or a commit.
 - **What "the listener typed" means.** OpenClaw is mostly talked to from chat apps: a message
   arriving is the listener typing. In a direct conversation the sender is taken to be the owner,
   since OpenClaw lets only paired or allowed senders talk to it there; a message in a group or a
@@ -948,6 +1079,10 @@ package.
   conversation shows `running` from the run's start, with no `user` before it.
 - **A run on a CLI backend**, in 2026.3, runs no tool hooks; only its start and end are heard.
 - **A stopped run** ends with `end` or `error` like any other, which is right for the music.
+- **A test run or a commit**: a command is not read, so it counts as a `command`.
+- **The cost of a turn** without a cost table in OpenClaw's configuration: only its tokens.
+- **The session's folder**: no event names one, so lines are counted in the gateway's working
+  folder, which is seldom a repository.
 
 ## Agents with no integration
 
@@ -1068,5 +1203,11 @@ OpenClaw, still open:
   documentation and source.
 - Whether a newer `openclaw plugins install --link` asks for `--force`, and what it says.
 - Whether `message_received` fires for the Control UI's own chat.
+
+Steps, lines and usage (0.6.0), all of it still open in the agents themselves: each was
+checked only with events in the documented shape against the stand-in relay, and git in a
+temporary repository. Not run: Claude Code with the status line set up, OpenClaw's
+`reply_payload_sending` in a running gateway, and the shell's command in each agent's own
+payload (Codex's is read both as a string and as a list of arguments).
 
 Windows has not been tried for any of them.

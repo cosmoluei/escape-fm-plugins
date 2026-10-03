@@ -5,7 +5,7 @@ background music that follows their work: a small plugin tells the escape.fm pla
 agent is working, waiting for them or done, and the music follows. This guide is written for you.
 Answer the person in their own language.
 
-This guide is for escape.fm plugins 0.5.0. The plugins are open source:
+This guide is for escape.fm plugins 0.6.0. The plugins are open source:
 https://github.com/escape-fm/plugins
 
 ## Before you change anything
@@ -69,6 +69,19 @@ claude plugin install escape-fm@escape-fm
 Changes: adds the escape-fm marketplace and installs its plugin into Claude Code's plugin folder.
 Next: the person starts a new session. To get new versions by themselves, they turn on
 auto-update: `/plugin` → Marketplaces → escape-fm → Enable auto-update.
+
+Optional, and only if the person wants Claude Code's tokens and cost counted ("Tokens and cost"
+on their page in escape.fm): Claude Code tells only its status line what a session costs, and a
+plugin cannot set one up. Ask first, then run, with the plugin's folder (Claude Code keeps it
+under `~/.claude/plugins/cache/escape-fm/escape-fm/`, in a folder named for its version):
+
+```bash
+node <the plugin's folder>/scripts/statusline.mjs --install
+```
+
+It copies the status line to `~/.escape-fm/statusline.mjs` and prints a `statusLine` setting.
+Show the person that setting and, after their yes, add it to `~/.claude/settings.json`. It
+replaces any status line they already have: if there is one, say so and let them choose.
 
 ### Codex
 
@@ -241,10 +254,17 @@ On the agent's events, for each session, the plugin sends escape.fm:
   it sends none);
 - whether each of the agent's steps (a command, an edit, a tool) succeeded or failed, as `true` or
   `false` only, never what the step was;
+- how many of the agent's steps were of each kind: an edit, a command, a test run, a search, a
+  commit, or another tool, as counts only (a shell command is looked at on this computer only to
+  tell a test run or a commit, and is never sent);
+- only if the person has switched them on, on their page in escape.fm ("Lines of code", "Tokens
+  and cost", under the history section): the lines added and removed and the commits made, counted
+  with git in the folder the agent works in, and the tokens and cost of the agent's work where the
+  agent can tell (Claude Code with the status line above, OpenClaw). Both are off until then;
 - and, as the request's User-Agent, which plugin and version sent it.
 
-It never sends prompts or messages, replies, code, file names, paths, commands, their output or
-error messages. The message is read on this computer only to choose the work mode, and is not
+It never sends prompts or messages, replies, code, file names, paths, commands, commit messages,
+diffs, their output or error messages. The message is read on this computer only to choose the work mode, and is not
 stored. Privacy policy: https://escape.fm/privacy
 
 `ESCAPE_FM_DISABLE=1` in the environment turns the plugin off without uninstalling it.

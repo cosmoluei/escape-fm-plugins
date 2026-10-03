@@ -1,6 +1,6 @@
 {
   "name": "escape-fm",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Background music that follows your work. Sends two tags per session (work mode, agent state) to escape.fm; never your prompts, code or file names.",
   "author": {
     "name": "ILLUSION Tech Limited",

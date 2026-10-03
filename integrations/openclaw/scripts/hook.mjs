@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // Runs once for each OpenClaw event the plugin (../index.js) passes on, and reports two tags for
-// the conversation: the work mode and the agent state, and whether each of the agent's steps went
-// through. That, a random session id and a timestamp are everything that leaves the machine. See README.md.
+// the conversation: the work mode and the agent state, whether each of the agent's steps went
+// through and how many of each kind there were, and, only when the listener has asked for them,
+// the tokens and cost of its turns and the lines of code in the gateway's folder. That, a random
+// session id and a timestamp are everything that leaves the machine. See README.md.
 //
 // This file is the OpenClaw part: which of the plugin's events mean what. The rest is shared with
 // the other agents' integrations (session.mjs, classify.mjs, lib.mjs). The plugin hands over only
-// the conversation's key, the event, a tool's name and whether it failed: no message is read, so
-// the work mode comes from what the agent does, never from what anyone wrote.
+// the conversation's key, the event, a tool's name and whether it failed, and a turn's tokens and
+// cost: no message is read, so the work mode comes from what the agent does, never from what
+// anyone wrote.
 
 import { readFileSync } from 'node:fs'
+import { stepOf } from './classify.mjs'
 import { greet, report } from './session.mjs'
 
 const EDIT = new Set(['write', 'edit', 'apply_patch'])
@@ -26,6 +30,11 @@ const READ = new Set([
   'pdf',
   'process',
 ])
+/**
+ * The shell. The plugin never reads what a tool is given, so its command is not known here: a
+ * command counts as a command, and a test run or a commit cannot be told from it.
+ */
+const SHELL = new Set(['exec', 'bash'])
 
 /** Only the name of a tool is looked at, never what it is given or what it returns. OpenClaw asks the owner in its reply, not with a tool. */
 const kindOf = (name) => (EDIT.has(name) ? 'edit' : READ.has(name) ? 'read' : 'other')
@@ -46,7 +55,10 @@ function toStep(input) {
     case 'tool_start':
       return { id, kind: 'tool', tool: kindOf(input.tool_name) }
     case 'tool_end':
-      return { id, kind: 'running', ok: outcome(input.tool_name, input.failed !== true) }
+      return { id, kind: 'running', ok: outcome(input.tool_name, input.failed !== true), step: stepOf(kindOf(input.tool_name), SHELL.has(input.tool_name) ? '' : undefined) }
+    case 'usage':
+      // what a turn used, two numbers: kept for the next report only if the listener asked for them
+      return { id, kind: 'usage', usage: { tokens: input.tokens, cost: input.cost } }
     case 'approval_requested':
     case 'question':
       return { id, kind: 'waiting' }

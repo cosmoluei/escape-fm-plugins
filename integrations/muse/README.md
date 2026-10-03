@@ -16,6 +16,8 @@ Per session, on hook events:
 | `ts` | `1790765086341` | When the event happened |
 | `computer` | `Ada's MacBook Pro` | This computer's name as you see it in your system settings (macOS: Computer Name; Windows and Linux: the host name), so your page can list it by name. Set `ESCAPE_FM_COMPUTER_NAME` to change it, or to an empty value to send none |
 | `outcomes` | `[true, false]` | Whether each of the agent's steps since the last report succeeded or failed, oldest first: a command, an edit or an MCP tool, from whether Muse Code reports it as failed (`PostToolUseFailure`). Never what the step was. Left out when there are none |
+| `steps` | `{"edit": 3, "test": 1}` | How many of the agent's steps since the last report were of each kind: `edit`, `command`, `test`, `search` (reading), `commit` or `other`, counted when a tool finishes. A command run in the shell (`bash` or `powershell`) is told apart as a test run or a commit from its command, on this machine; the command itself is never sent or kept. Left out when there were none |
+| `lines` | `{"added": 120, "removed": 14, "commits": 1}` | **Only if you have switched on "Lines of code" on your page in escape.fm.** At the end of a turn, the lines added and removed and the commits made since the last report, counted with git in the folder you work in. Never a file name, a commit message or a diff |
 
 When the session ends, one last report says so: `session`, `ts` and `end: true`.
 
@@ -23,18 +25,25 @@ And one request header, the same on every report:
 
 | Header | Example | What it is |
 | --- | --- | --- |
-| `User-Agent` | `escape-fm/0.5.0 (muse-code)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
+| `User-Agent` | `escape-fm/0.6.0 (muse-code)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
 
 From it the relay counts, once a day for each paired machine, that this integration
 reported and how many reports it sent, with the country Cloudflare places the request
 in (never the address). Those counts are all that is kept. How it is done is in [docs/analytics.md](../../docs/analytics.md).
 
+`lines` and `usage` are off until you switch them on, on your page in escape.fm ("Lines of
+code", "Tokens and cost", under the history section). escape.fm's answer to each report says
+which are on, and the plugin keeps that in `~/.escape-fm/share.json`; while one is off, nothing
+of it is counted, kept or sent (for lines, git is not even run). Muse Code tells a hook nothing of tokens or cost, so it sends no `usage`.
+
 Nothing else. Your message is read locally to choose the work mode
 ([`scripts/classify.mjs`](scripts/classify.mjs), a short keyword list you can read
-in a minute) and is never sent, stored or logged. Tool inputs, commands, file names,
-paths, outputs and error messages are not read at all; only tool names are, and they
-stay local. Muse Code also hands every hook the folder you work in and the model's name;
-neither is looked at.
+in a minute) and is never sent, stored or logged. Tool inputs, file names, paths,
+outputs and error messages are not read at all; only tool names are, and of `bash` and
+`powershell` the command, only to tell a test run or a commit from any other command
+([`scripts/classify.mjs`](scripts/classify.mjs), `stepOf`). They stay local. Muse Code
+also hands every hook the folder you work in, used only to run git there when you have
+switched on "Lines of code", and the model's name, which is not looked at.
 
 The hooks never answer Muse Code. All but four run in the background (`async`), where
 nothing they print counts; the session's start prints only the one welcome below

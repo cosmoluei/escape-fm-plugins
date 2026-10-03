@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Runs on Gemini CLI hook events and reports two tags for this session: the work mode
-// and the agent state, and whether each of the agent's steps went through, where Gemini
-// CLI says. That, a random session id and a timestamp are everything that leaves the
-// machine. See README.md.
+// and the agent state, whether each of the agent's steps went through, where Gemini
+// CLI says, and how many of each kind there were, and, only when the listener has asked
+// for them, the lines of code of the session's work. That, a random session id and a
+// timestamp are everything that leaves the machine. See README.md.
 //
 // This file is the Gemini CLI part: which of its events mean what. The rest is shared
 // with the other agents' integrations (session.mjs, classify.mjs, lib.mjs).
@@ -13,6 +14,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stepOf } from './classify.mjs'
 import { report, welcome } from './session.mjs'
 
 const EDIT = new Set(['replace', 'write_file'])
@@ -22,8 +24,15 @@ const ASK = new Set(['ask_user'])
 /** A shell command: one that ran and exited with an error is not marked as an error, so only one that could not run is told. */
 const SHELL = new Set(['run_shell_command'])
 
-/** Only the name of a tool is looked at, never what it is given or what it returns. */
+/**
+ * Of a tool, only its name is looked at, for the shell its command, here and only to tell a test
+ * run or a commit from any other command (`stepOf` in classify.mjs), and of its result whether it
+ * has an error (below); nothing of any of it leaves the machine but the kind of step and the yes or no.
+ */
 const kindOf = (name) => (ASK.has(name) ? 'ask' : EDIT.has(name) ? 'edit' : READ.has(name) ? 'read' : 'other')
+
+/** A finished tool's kind of step: for the shell, from its command, which goes no further. */
+const stepFor = (input) => stepOf(kindOf(input.tool_name), SHELL.has(input.tool_name) ? String(input.tool_input?.command ?? '') : undefined)
 
 /**
  * A finished tool as a step of the agent's: whether it went through. Of the tool's result only
@@ -48,7 +57,7 @@ function toStep(input) {
       // before Gemini CLI asks for approval: a tool waiting on the listener says so below
       return { id, kind: 'tool', tool: kindOf(input.tool_name) }
     case 'AfterTool':
-      return { id, kind: 'running', ok: outcome(input.tool_name, input.tool_response) }
+      return { id, kind: 'running', ok: outcome(input.tool_name, input.tool_response), step: stepFor(input) }
     case 'Notification':
       return input.notification_type === 'ToolPermission' ? { id, kind: 'waiting' } : null
     case 'AfterAgent':
@@ -65,6 +74,8 @@ async function main() {
   const input = JSON.parse(readFileSync(0, 'utf8'))
   const step = input.session_id ? toStep(input) : null
   if (!step) return
+  // where git counts the lines of code, when the listener has asked for them; never sent
+  if (typeof input.cwd === 'string') step.cwd = input.cwd
 
   // a session's start is told in the foreground, so the first one can say whether the relay was reached
   const first = await report(step, { detach: step.kind !== 'start' })
