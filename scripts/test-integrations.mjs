@@ -25,6 +25,10 @@ const HOOK = {
   gemini: path.join(ROOT, 'integrations/gemini/scripts/hook.mjs'),
   copilot: path.join(ROOT, 'integrations/copilot/scripts/hook.mjs'),
   droid: path.join(ROOT, 'integrations/droid/scripts/hook.mjs'),
+  codebuddy: path.join(ROOT, 'integrations/codebuddy/scripts/hook.mjs'),
+  workbuddy: path.join(ROOT, 'integrations/workbuddy/scripts/hook.mjs'),
+  muse: path.join(ROOT, 'integrations/muse/scripts/hook.mjs'),
+  openclaw: path.join(ROOT, 'integrations/openclaw/scripts/hook.mjs'),
 }
 /** What each integration calls itself in its User-Agent, and where its version comes from. */
 const CLIENT = {
@@ -35,6 +39,10 @@ const CLIENT = {
   gemini: { name: 'gemini-cli', manifest: 'integrations/gemini/gemini-extension.json' },
   copilot: { name: 'copilot-cli', manifest: 'integrations/copilot/plugin.json' },
   droid: { name: 'droid', manifest: 'integrations/droid/.factory-plugin/plugin.json' },
+  codebuddy: { name: 'codebuddy', manifest: 'integrations/codebuddy/.codebuddy-plugin/plugin.json' },
+  workbuddy: { name: 'workbuddy', manifest: 'integrations/workbuddy/.workbuddy-plugin/plugin.json' },
+  muse: { name: 'muse-code', manifest: 'integrations/muse/manifest.json' },
+  openclaw: { name: 'openclaw', manifest: 'integrations/openclaw/openclaw.plugin.json' },
 }
 /** An integration's own hooks.json: where its events are (Droid's file is the events themselves). */
 const hooksFile = (tool) => (tool === 'claude' ? 'plugin/hooks/hooks.json' : `integrations/${tool}/hooks/hooks.json`)
@@ -176,7 +184,7 @@ function checkPrivacy(m, ids, tool) {
     assert.equal(`${request.method} ${request.url}`, 'POST /v1/signal')
     assert.equal(request.headers.authorization, `Bearer ${key}`)
     assert.equal(request.headers['user-agent'], userAgent(tool))
-    assert.match(request.headers['user-agent'], /^escape-fm\/\d+\.\d+\.\d+ \((claude-code|codex|cursor|qwen-code|gemini-cli|copilot-cli|droid)\)$/)
+    assert.match(request.headers['user-agent'], /^escape-fm\/\d+\.\d+\.\d+ \((claude-code|codex|cursor|qwen-code|gemini-cli|copilot-cli|droid|codebuddy|workbuddy|muse-code|openclaw)\)$/)
     // what curl, or Node's fetch without it, sends besides, with the same value on every machine; anything more would be ours
     const generic = { 'accept-language': '*', 'sec-fetch-mode': 'cors' }
     for (const [name, value] of Object.entries(generic)) if (name in request.headers) assert.equal(request.headers[name], value)
@@ -603,6 +611,311 @@ await test('Droid: events become the two tags, and Droid is never answered', asy
   m.done()
 })
 
+// ------------------------------------------------- CodeBuddy Code and WorkBuddy
+
+const buddy = (session_id, hook_event_name, more = {}) => [
+  [],
+  { session_id, transcript_path: PRIVATE.transcript, cwd: PRIVATE.cwd, permission_mode: 'default', hook_event_name, ...more },
+]
+const buddyTool = (id, event, tool_name, more = {}) =>
+  buddy(id, event, {
+    tool_name,
+    tool_input: { file_path: PRIVATE.file, command: PRIVATE.command },
+    ...(event === 'PostToolUse' ? { tool_response: { filePath: PRIVATE.file, success: true } } : {}),
+    ...(event === 'PostToolUseFailure' ? { error: `Exit code 1\n${PRIVATE.output}`, is_interrupt: false } : {}),
+    ...more,
+  })
+
+for (const tool of ['codebuddy', 'workbuddy']) {
+  await test(`${tool === 'codebuddy' ? 'CodeBuddy Code' : 'WorkBuddy'}: events become the two tags, and the outcomes`, async () => {
+    const m = await machine()
+    const id = '6a1f3c9e-2b4d-4e8f-9a0c-1d2e3f4a5b6c'
+    const { trace, outputs } = await play(m, HOOK[tool], [
+      buddy(id, 'SessionStart', { source: 'startup', client: 'cli', version: '2.161.1', model: 'hunyuan' }),
+      buddy(id, 'UserPromptSubmit', { prompt: `why does the refund test fail? ${PRIVATE.words}`, generation_id: 'gen-1' }),
+      buddyTool(id, 'PreToolUse', 'Read'),
+      buddyTool(id, 'PostToolUse', 'Read'),
+      buddyTool(id, 'PreToolUse', 'Bash'),
+      buddyTool(id, 'PermissionRequest', 'Bash'),
+      buddy(id, 'Notification', { notification_type: 'permission_prompt', message: `CodeBuddy needs your permission to run ${PRIVATE.command}` }),
+      buddyTool(id, 'PostToolUse', 'Bash'),
+      // a compaction in the middle of a turn: the agent is not idle
+      buddy(id, 'SessionStart', { source: 'compact' }),
+      buddyTool(id, 'PreToolUse', 'Edit'),
+      // an edit that did not apply: kept, and sent with the next report
+      buddyTool(id, 'PostToolUseFailure', 'Edit'),
+      // a search that found nothing is not the agent failing, nor is a tool the listener stopped
+      buddyTool(id, 'PostToolUseFailure', 'Grep'),
+      buddyTool(id, 'PostToolUseFailure', 'Bash', { is_interrupt: true }),
+      buddyTool(id, 'PreToolUse', 'AskUserQuestion'),
+      // waiting for input after a while is not a question
+      buddy(id, 'Notification', { notification_type: 'idle_prompt', message: 'CodeBuddy is waiting for your input' }),
+      buddy(id, 'Stop', { stop_hook_active: false, generation_id: 'gen-1', last_assistant_message: PRIVATE.reply, session_crons: [] }),
+      buddy(id, 'UserPromptSubmit', { prompt: 'ok', permission_mode: 'plan' }),
+      buddyTool(id, 'PreToolUse', 'Write'),
+      buddyTool(id, 'PostToolUse', 'Write'),
+      buddy(id, 'StopFailure', { error: 'rate_limit' }),
+      buddy(id, 'PreCompact', { trigger: 'auto', custom_instructions: '' }),
+      buddy(id, 'SessionEnd', { reason: 'prompt_input_exit' }),
+    ])
+    assert.deepEqual(trace, [
+      'idle/null', 'user/debug', 'running/debug', '-', '-', 'waiting/debug', '-', 'running/debug:+', '-', '-', '-', '-', '-', 'waiting/debug:x',
+      '-', 'idle/debug', 'user/plan', 'running/plan', '-', 'idle/plan:+', '-', 'end',
+    ])
+    const said = JSON.parse(outputs[0]).systemMessage
+    assert.match(said, /^escape\.fm is set up\. To open the player paired with this machine, run in your own terminal: node ".*open\.mjs"$/)
+    assert.ok(outputs.slice(1).every((out) => out === ''), 'nothing else is printed, so the agent is never answered')
+    checkPrivacy(m, [id], tool)
+    assert.deepEqual(allFiles(path.join(m.fm, 'sessions')), [])
+    m.done()
+  })
+}
+
+// ----------------------------------------------------------------- Muse Code
+
+const muse = (session_id, hook_event_name, more = {}) => [
+  [],
+  { hook_event_name, session_id, turn_id: 'turn-1', cwd: PRIVATE.cwd, transcript_path: null, model: 'muse-1', permission_mode: 'default', ...more },
+]
+const museTool = (id, event, tool_name, more = {}) =>
+  muse(id, event, {
+    tool_name,
+    tool_input: { command: PRIVATE.command, path: PRIVATE.file },
+    ...(event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure' ? { tool_use_id: 'call_01' } : {}),
+    ...(event === 'PostToolUse' ? { tool_response: PRIVATE.output } : {}),
+    ...(event === 'PostToolUseFailure' ? { error: PRIVATE.output, is_interrupt: false, duration_ms: 812 } : {}),
+    ...more,
+  })
+
+await test('Muse Code: events become the two tags, and the outcomes', async () => {
+  const m = await machine()
+  const id = '01a0ae0d-1cdf-7221-b5e5-96159c9a1ec0'
+  const child = '01a0ae0d-2222-7221-b5e5-child0000001'
+  const { trace, outputs } = await play(m, HOOK.muse, [
+    [[], { hook_event_name: 'SessionStart', source: 'startup', session_id: id, cwd: PRIVATE.cwd, transcript_path: null, model: 'unknown', permission_mode: 'default' }],
+    muse(id, 'UserPromptSubmit', { prompt: `why does the refund test fail? ${PRIVATE.words}` }),
+    museTool(id, 'PreToolUse', 'bash'),
+    museTool(id, 'PermissionRequest', 'bash'),
+    muse(id, 'Notification', { notification_type: 'permission_prompt', title: 'Approval needed', message: `Run ${PRIVATE.command}?` }),
+    museTool(id, 'PostToolUse', 'bash'),
+    // a child agent's tools, under a session of its own that no message opened
+    museTool(child, 'PreToolUse', 'read_file'),
+    muse(child, 'StopFailure', { error: 'model_error', agent_id: 'agent-1', agent_type: 'explorer' }),
+    museTool(id, 'PreToolUse', 'edit_file'),
+    museTool(id, 'PostToolUseFailure', 'edit_file'),
+    museTool(id, 'PreToolUse', 'search'),
+    museTool(id, 'PostToolUseFailure', 'search'),
+    museTool(id, 'PostToolBatch', 'edit_file', { tool_calls: [] }),
+    museTool(id, 'PreToolUse', 'request_user_input'),
+    muse(id, 'PreLLMCall', { provider: 'meta', messages: [{ preview: PRIVATE.reply }] }),
+    muse(id, 'Stop', { stop_hook_active: false, last_assistant_message: PRIVATE.reply }),
+    muse(id, 'SessionStart', { source: 'compact' }),
+    muse(id, 'UserPromptSubmit', { prompt: 'ok', permission_mode: 'plan' }),
+    museTool(id, 'PreToolUse', 'write_file'),
+    museTool(id, 'PostToolUse', 'write_file'),
+    muse(id, 'StopFailure', { error: 'rate_limit', error_details: PRIVATE.output }),
+    [[], { hook_event_name: 'SessionEnd', session_id: id, cwd: PRIVATE.cwd, transcript_path: null, model: 'unknown', permission_mode: 'default', reason: 'exit' }],
+  ])
+  assert.deepEqual(trace, [
+    'idle/null', 'user/debug', 'running/debug', 'waiting/debug', '-', 'running/debug:+', '-', '-', '-', '-', '-', '-', '-', 'waiting/debug:x',
+    '-', 'idle/debug', '-', 'user/plan', 'running/plan', '-', 'idle/plan:+', 'end',
+  ])
+  const said = JSON.parse(outputs[0]).systemMessage
+  assert.match(said, /^escape\.fm is set up\. To open the player paired with this machine, run in your own terminal: node ".*open\.mjs"$/)
+  assert.ok(said.length <= 1000, 'Muse Code takes a systemMessage of 1000 characters at most')
+  assert.ok(outputs.slice(1).every((out) => out === ''), 'nothing else is printed, so Muse Code is never answered')
+  checkPrivacy(m, [id, child], 'muse')
+  assert.deepEqual(allFiles(path.join(m.fm, 'sessions')), [])
+  m.done()
+})
+
+await test('Muse Code: every handler has only fields its settings accept, and runs in the background but at a start and an end', () => {
+  const { hooks } = JSON.parse(readFileSync(path.join(ROOT, hooksFile('muse')), 'utf8'))
+  for (const [event, groups] of Object.entries(hooks)) {
+    for (const group of groups) {
+      // a matcher of letters, digits, _ and | is a list of exact names
+      if ('matcher' in group) assert.match(group.matcher, /^[A-Za-z0-9_|]+$/, event)
+      for (const handler of group.hooks) {
+        assert.deepEqual(Object.keys(handler).filter((key) => !['type', 'command', 'timeout', 'async'].includes(key)), [], `${event}: a field Muse Code would skip the handler for`)
+        assert.ok(Number.isInteger(handler.timeout), `${event}: a timeout in whole seconds`)
+        assert.equal(handler.async === true, !['SessionStart', 'Stop', 'StopFailure', 'SessionEnd'].includes(event), event)
+      }
+    }
+  }
+})
+
+// ------------------------------------------------------------------ OpenClaw
+
+/** A stand-in for the API OpenClaw gives a plugin: its typed hooks and its agent event stream, fired by hand. */
+function openclawApi() {
+  const hooks = new Map()
+  const streams = []
+  return {
+    api: {
+      id: 'escape-fm',
+      config: { channels: { telegram: { botToken: PRIVATE.output } } },
+      on: (name, handler) => hooks.set(name, [...(hooks.get(name) ?? []), handler]),
+      runtime: { events: { onAgentEvent: (listener) => (streams.push(listener), () => {}) } },
+    },
+    hook: (name, event, ctx = {}) => {
+      for (const handler of hooks.get(name) ?? []) assert.equal(handler(event, ctx), undefined, `${name} answers nothing`)
+    },
+    stream: (event) => streams.forEach((listener) => listener(event)),
+    hooks,
+  }
+}
+
+await test('OpenClaw: the plugin passes on only the conversation, the event, a tool and whether it failed', async () => {
+  const { listen } = await import(path.join(ROOT, 'integrations/openclaw/index.js'))
+  const { api, hook, stream, hooks } = openclawApi()
+  const sent = []
+  listen(api, (event) => sent.push(event))
+  assert.deepEqual([...hooks.keys()].sort(), ['after_tool_call', 'before_tool_call', 'gateway_start', 'message_received', 'session_end'], 'no hook that hands over the conversation, or can change anything but a tool call, which it never does')
+
+  const key = 'agent:main:telegram:direct:12345678'
+  const group = 'agent:main:telegram:group:-100987654'
+  const message = { from: 'telegram:12345678', content: `fix the refund test ${PRIVATE.words}`, metadata: { senderName: PRIVATE.email } }
+  hook('gateway_start', { port: 18789 }, { port: 18789 })
+  hook('message_received', { ...message, sessionKey: key, runId: 'run-1' }, { channelId: 'telegram', sessionKey: key })
+  stream({ runId: 'run-1', seq: 1, stream: 'lifecycle', ts: 1, sessionKey: key, data: { phase: 'start', startedAt: 1 } })
+  hook('before_tool_call', { toolName: 'exec', params: { command: PRIVATE.command }, runId: 'run-1', toolCallId: 't1' }, { sessionKey: key, runId: 'run-1', toolName: 'exec' })
+  // a run that is not shown in the Control UI: its events after the start come without the key
+  stream({ runId: 'run-1', seq: 2, stream: 'lifecycle', ts: 2, data: { phase: 'waiting-approval', approvalId: 'ap-1' } })
+  stream({ runId: 'run-1', seq: 3, stream: 'execution', ts: 3, data: { approval: { id: 'ap-1', state: 'pending' } } })
+  stream({ runId: 'run-1', seq: 4, stream: 'lifecycle', ts: 4, data: { phase: 'approval-resolved', approvalId: 'ap-1' } })
+  hook('after_tool_call', { toolName: 'exec', params: { command: PRIVATE.command }, runId: 'run-1', result: { content: PRIVATE.output }, durationMs: 40 }, { sessionKey: key, runId: 'run-1' })
+  hook('before_tool_call', { toolName: 'edit', params: { path: PRIVATE.file }, runId: 'run-1' }, { sessionKey: key, runId: 'run-1' })
+  hook('after_tool_call', { toolName: 'edit', params: { path: PRIVATE.file }, runId: 'run-1', error: PRIVATE.output }, { sessionKey: key, runId: 'run-1' })
+  stream({ runId: 'run-1', seq: 5, stream: 'assistant', ts: 5, sessionKey: key, data: { text: PRIVATE.reply } })
+  stream({ runId: 'run-1', seq: 6, stream: 'lifecycle', ts: 6, sessionKey: key, data: { phase: 'end' } })
+  // someone else in a group: the agent works, but nobody here typed
+  hook('message_received', { ...message, sessionKey: group }, { channelId: 'telegram', sessionKey: group })
+  stream({ runId: 'run-2', seq: 1, stream: 'lifecycle', ts: 7, sessionKey: group, data: { phase: 'start' } })
+  stream({ runId: 'run-2', seq: 2, stream: 'lifecycle', ts: 8, sessionKey: group, data: { phase: 'error', error: PRIVATE.output } })
+  // the agent's own heartbeat is not work anyone asked for
+  stream({ runId: 'run-3', seq: 1, stream: 'lifecycle', ts: 9, sessionKey: key, isHeartbeat: true, data: { phase: 'start' } })
+  // OpenClaw 2026.3: a command waiting for approval returns at once, and the run ends while it waits
+  stream({ runId: 'run-4', seq: 1, stream: 'lifecycle', ts: 10, sessionKey: key, data: { phase: 'start' } })
+  hook('after_tool_call', { toolName: 'exec', runId: 'run-4', result: { details: { status: 'approval-pending', approvalId: 'ap-2', command: PRIVATE.command } } }, { sessionKey: key })
+  stream({ runId: 'run-4', seq: 2, stream: 'lifecycle', ts: 11, sessionKey: key, data: { phase: 'end' } })
+  hook('session_end', { sessionId: 'uuid-1', sessionKey: key, messageCount: 4 }, { sessionId: 'uuid-1', sessionKey: key })
+  // a hook given something unexpected stays quiet
+  hook('after_tool_call', null, null)
+  stream(null)
+
+  assert.deepEqual(
+    sent.map((event) => [event.session_id === key ? 'dm' : event.session_id === group ? 'group' : '-', event.hook_event_name, event.tool_name ?? '', event.failed ?? ''].join(' ').trim()),
+    [
+      '- gateway_start',
+      'dm message_received',
+      'dm run_start',
+      'dm tool_start exec',
+      'dm approval_requested',
+      'dm approval_resolved',
+      'dm tool_end exec false',
+      'dm tool_start edit',
+      'dm tool_end edit true',
+      'dm run_end',
+      'group run_start',
+      'group run_end',
+      'dm run_start',
+      'dm approval_requested',
+      'dm session_end',
+    ],
+  )
+  const wire = JSON.stringify(sent)
+  for (const secret of SECRETS) assert.ok(!wire.includes(secret), `passed on: ${secret}`)
+
+  // and what scripts/hook.mjs makes of them
+  const m = await machine()
+  const { trace, outputs } = await play(m, HOOK.openclaw, sent.map((event) => [[], event]))
+  assert.deepEqual(trace, [
+    '-', 'user/deep', 'running/deep', '-', 'waiting/deep', 'running/deep', '-', '-', '-', 'idle/deep:+x', 'running/null', 'idle/null', 'running/deep', 'waiting/deep', 'end',
+  ])
+  assert.ok(outputs.every((out) => out === ''), 'nothing is printed')
+  checkPrivacy(m, [key, group], 'openclaw')
+  m.done()
+})
+
+await test('OpenClaw: the plugin hands each event to the hook script on a process of its own', async () => {
+  const { listen } = await import(path.join(ROOT, 'integrations/openclaw/index.js'))
+  const m = await machine()
+  const saved = { ...process.env }
+  Object.assign(process.env, { ESCAPE_FM_HOME: m.env.ESCAPE_FM_HOME, ESCAPE_FM_API: m.env.ESCAPE_FM_API, ESCAPE_FM_NO_OPEN: '1', NO_PROXY: '127.0.0.1' })
+  try {
+    const { api, hook, stream } = openclawApi()
+    listen(api)
+    const key = 'agent:main:main'
+    hook('message_received', { from: 'webchat', content: PRIVATE.words, sessionKey: key }, { channelId: 'webchat', sessionKey: key })
+    stream({ runId: 'r', seq: 1, stream: 'lifecycle', ts: 1, sessionKey: key, data: { phase: 'start' } })
+    stream({ runId: 'r', seq: 2, stream: 'lifecycle', ts: 2, sessionKey: key, data: { phase: 'end' } })
+    hook('session_end', { sessionId: 'u', sessionKey: key, messageCount: 2 }, { sessionKey: key })
+    await m.server.settle(4)
+  } finally {
+    for (const name of ['ESCAPE_FM_HOME', 'ESCAPE_FM_API', 'ESCAPE_FM_NO_OPEN', 'NO_PROXY']) {
+      if (name in saved) process.env[name] = saved[name]
+      else delete process.env[name]
+    }
+  }
+  const bodies = m.server.seen.map((request) => JSON.parse(request.body))
+  // each report goes out on a process of its own, so they may arrive in any order; each says what the state was when it went
+  assert.deepEqual(bodies.map((body) => (body.end ? 'end' : body.agent)).sort(), ['end', 'idle', 'running', 'user'])
+  checkPrivacy(m, ['agent:main:main'], 'openclaw')
+  m.done()
+})
+
+await test('OpenClaw: install.mjs copies the plugin and links it with the openclaw command, and takes it out again', async () => {
+  const m = await machine()
+  // a stand-in openclaw that notes how it was called
+  const bin = path.join(m.home, 'bin')
+  const calls = path.join(m.home, 'calls.txt')
+  mkdirSync(bin)
+  writeFileSync(path.join(bin, 'openclaw'), `#!/bin/sh\necho "$*" >> "${calls}"\n`, { mode: 0o755 })
+  const env = { ...m.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` }
+  const install = path.join(ROOT, 'integrations/openclaw/install.mjs')
+  const dest = path.join(m.fm, 'openclaw')
+  for (const round of [1, 2]) {
+    const result = await run(install, [], '', env)
+    assert.equal(result.code, 0, result.err)
+    assert.match(result.out, /openclaw gateway restart/)
+    for (const name of ['index.js', 'openclaw.plugin.json', 'package.json', 'scripts/hook.mjs', 'scripts/session.mjs', 'scripts/client.mjs']) {
+      assert.ok(existsSync(path.join(dest, name)), `round ${round}: ${name}`)
+    }
+    assert.ok(!existsSync(path.join(dest, 'install.mjs')))
+  }
+  // the installed copy works from where it was put
+  await run(path.join(dest, 'scripts/hook.mjs'), [], { session_id: 's-1', hook_event_name: 'message_received' }, env)
+  await m.server.settle(1)
+  assert.equal(JSON.parse(m.server.seen[0].body).agent, 'user')
+  assert.equal(m.server.seen[0].headers['user-agent'], userAgent('openclaw'))
+  const removed = await run(install, ['--uninstall'], '', env)
+  assert.equal(removed.code, 0, removed.err)
+  assert.ok(!existsSync(dest), 'the plugin is gone')
+  assert.ok(existsSync(path.join(m.fm, 'config.json')), 'the pairing is kept')
+  assert.deepEqual(readFileSync(calls, 'utf8').trim().split('\n'), [
+    `plugins install --link ${dest}`,
+    `plugins install --link ${dest}`,
+    'plugins uninstall escape-fm --force',
+  ])
+  // with no openclaw at all, it says what to run
+  const bare = await run(install, [], '', { ...m.env, PATH: path.join(m.home, 'no-bin') })
+  assert.equal(bare.code, 0, bare.err)
+  assert.match(bare.out, /There is no openclaw command here\. Where OpenClaw is installed, run: openclaw plugins install --link /)
+  m.done()
+})
+
+await test('OpenClaw: the manifest and package.json agree, and the plugin loads as OpenClaw loads it', async () => {
+  const manifest = JSON.parse(readFileSync(path.join(ROOT, 'integrations/openclaw/openclaw.plugin.json'), 'utf8'))
+  const pkg = JSON.parse(readFileSync(path.join(ROOT, 'integrations/openclaw/package.json'), 'utf8'))
+  assert.equal(pkg.version, manifest.version)
+  assert.equal(pkg.name, manifest.id, 'OpenClaw warns when the package name and the id differ')
+  assert.deepEqual(pkg.openclaw.extensions, ['./index.js'])
+  assert.deepEqual(manifest.activation, { onStartup: true }, 'newer versions load a plugin with hooks at start only when asked to')
+  const plugin = (await import(path.join(ROOT, 'integrations/openclaw/index.js'))).default
+  assert.equal(plugin.id, manifest.id)
+  assert.equal(typeof plugin.register, 'function')
+})
+
 // ------------------------------------------------------------ the agents alike
 
 const first = {
@@ -613,6 +926,10 @@ const first = {
   gemini: gemini('s-1', 'BeforeAgent', { prompt: 'fix the bug' }),
   copilot: copilot('userPromptSubmitted', 's-1', { prompt: 'fix the bug' }),
   droid: droid('s-1', 'UserPromptSubmit', { prompt: 'fix the bug' }),
+  codebuddy: buddy('s-1', 'UserPromptSubmit', { prompt: 'fix the bug' }),
+  workbuddy: buddy('s-1', 'UserPromptSubmit', { prompt: 'fix the bug' }),
+  muse: muse('s-1', 'UserPromptSubmit', { prompt: 'fix the bug' }),
+  openclaw: [[], { session_id: 's-1', hook_event_name: 'message_received' }],
 }
 
 for (const [name, script] of Object.entries(HOOK)) {
@@ -640,7 +957,8 @@ for (const [name, script] of Object.entries(HOOK)) {
     m.done()
   })
 
-  await test(`${name}: every event in its hooks.json runs this script`, () => {
+  // OpenClaw has no hooks.json: its plugin calls the script (above)
+  if (name !== 'openclaw') await test(`${name}: every event in its hooks.json runs this script`, () => {
     const hooks = eventsIn(JSON.parse(readFileSync(path.join(ROOT, hooksFile(name)), 'utf8')))
     const handlers = Object.values(hooks).flat().flatMap((item) => item.hooks ?? [item])
     assert.ok(handlers.length >= 7)
@@ -789,19 +1107,42 @@ const others = {
       hooks: { BeforeTool: [{ matcher: 'write_file|replace', hooks: [{ name: 'security-check', type: 'command', command: '$GEMINI_PROJECT_DIR/.gemini/hooks/security.sh', timeout: 5000 }] }] },
     },
   },
+  codebuddy: {
+    file: 'settings.json',
+    config: {
+      model: 'claude-4.5',
+      permissions: { allow: ['Bash(npm run lint)'] },
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: "jq -r '.tool_input.command' >> ~/.codebuddy/bash-command.log" }] }] },
+    },
+  },
+  workbuddy: {
+    file: 'settings.json',
+    config: {
+      enabledPlugins: { 'pet@workbuddy-buddy': true },
+      hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: '/path/to/your-hook.sh UserPromptSubmit' }] }] },
+    },
+  },
+  muse: {
+    file: 'settings.json',
+    config: {
+      schema_version: 1,
+      model: 'muse-1',
+      hooks: { PreToolUse: [{ matcher: 'bash', hooks: [{ type: 'command', command: '~/.config/muse/hooks/guard.sh', timeout: 10 }] }] },
+    },
+  },
   droid: {
     file: 'hooks.json',
     config: { PreToolUse: [{ matcher: 'Execute', commandRegex: '^git ', hooks: [{ type: 'command', command: '/usr/local/bin/audit-git-command.sh', timeout: 30 }] }] },
   },
 }
 
-for (const tool of ['codex', 'cursor', 'qwen', 'gemini', 'droid']) {
+for (const tool of ['codex', 'cursor', 'qwen', 'gemini', 'droid', 'codebuddy', 'workbuddy', 'muse']) {
   await test(`${tool}: install.mjs adds the hooks beside what is there, and takes out only its own`, async () => {
     const m = await machine()
     const dir = path.join(m.home, `dot-${tool}`)
     const file = path.join(dir, others[tool].file)
     const install = path.join(ROOT, `integrations/${tool}/install.mjs`)
-    const env = { ...m.env, CODEX_HOME: path.join(m.home, 'not-used') }
+    const env = { ...m.env, CODEX_HOME: path.join(m.home, 'not-used'), CODEBUDDY_CONFIG_DIR: path.join(m.home, 'not-used'), WORKBUDDY_CONFIG_DIR: path.join(m.home, 'not-used'), XDG_CONFIG_HOME: path.join(m.home, 'not-used') }
 
     const missing = await run(install, ['--dir', dir], '', env)
     assert.equal(missing.code, 1, 'refuses a folder that is not there')
@@ -906,6 +1247,32 @@ await test('install.mjs leaves a hooks.json it cannot read alone', async () => {
   assert.equal(result.code, 1)
   assert.match(readFileSync(path.join(dir, 'hooks.json'), 'utf8'), /\/\/ mine/)
   m.done()
+})
+
+/**
+ * The guide an agent reads to install escape.fm (public/install-plugin.md, served at escape.fm/install-plugin.md):
+ * every integration is in it with the command that installs it, and the version it names is the one released.
+ */
+await test('the install guide has every integration, with its command, and the version every manifest has', () => {
+  // in the public repository it is at the root (scripts/publish-plugins.mjs)
+  const where = ['public/install-plugin.md', 'install-plugin.md'].map((name) => path.join(ROOT, name)).find((file) => existsSync(file))
+  assert.ok(where, 'the guide is there')
+  const guide = readFileSync(where, 'utf8')
+  const command = (tool) =>
+    ({
+      claude: 'claude plugin install escape-fm@escape-fm',
+      codex: 'codex plugin add escape-fm@escape-fm',
+      gemini: 'gemini extensions install ~/.escape-fm/plugins/integrations/gemini',
+    })[tool] ?? `node ~/.escape-fm/plugins/integrations/${tool}/install.mjs`
+  const tools = ['claude', ...readdirSync(path.join(ROOT, 'integrations'))]
+  for (const tool of tools) {
+    assert.ok(tool in HOOK, `integrations/${tool} is tested here`)
+    assert.ok(guide.includes(command(tool)), `the guide installs ${tool} with: ${command(tool)}`)
+  }
+  const versions = new Set(Object.values(CLIENT).map(({ manifest }) => JSON.parse(readFileSync(path.join(ROOT, manifest), 'utf8')).version))
+  assert.equal(versions.size, 1, `one version for every integration: ${[...versions].join(', ')}`)
+  const named = [...guide.matchAll(/plugins (\d+\.\d+\.\d+)/g)].map((found) => found[1])
+  assert.ok(named.length > 0 && named.every((version) => versions.has(version)), `the guide names ${named.join(', ')}`)
 })
 
 await test('the copies of shared/ are in sync', async () => {

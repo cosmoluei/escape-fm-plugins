@@ -23,7 +23,7 @@ And one request header, the same on every report:
 
 | Header | Example | What it is |
 | --- | --- | --- |
-| `User-Agent` | `escape-fm/0.4.0 (qwen-code)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
+| `User-Agent` | `escape-fm/0.5.0 (qwen-code)` | Which integration sent the report and its version, so escape.fm can count how many machines use each integration. It names nothing about your machine or you |
 
 From it the relay counts, once a day for each paired machine, that this integration
 reported and how many reports it sent, with the country Cloudflare places the request

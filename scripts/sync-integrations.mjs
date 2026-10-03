@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Copies the code every integration shares (shared/) into each of them, and writes
 // each one's client.mjs: which integration it is and its version, from its manifest.
+// An integration that is another's under a name of its own (WorkBuddy, CodeBuddy's) also
+// gets that one's hook script and hooks.
 //
 //   node scripts/sync-integrations.mjs            write the copies
 //   node scripts/sync-integrations.mjs --check    change nothing; exit 1 if a copy is out of date
@@ -33,16 +35,29 @@ const TARGETS = {
   'integrations/gemini/scripts': { files: [...RUNTIME, ...SETUP], client: 'gemini-cli', manifest: 'integrations/gemini/gemini-extension.json' },
   'integrations/copilot/scripts': { files: [...RUNTIME, ...SETUP], client: 'copilot-cli', manifest: 'integrations/copilot/plugin.json' },
   'integrations/droid/scripts': { files: [...RUNTIME, ...SETUP], client: 'droid', manifest: 'integrations/droid/.factory-plugin/plugin.json' },
+  'integrations/codebuddy/scripts': { files: [...RUNTIME, ...SETUP], client: 'codebuddy', manifest: 'integrations/codebuddy/.codebuddy-plugin/plugin.json' },
+  'integrations/workbuddy/scripts': { files: [...RUNTIME, ...SETUP], client: 'workbuddy', manifest: 'integrations/workbuddy/.workbuddy-plugin/plugin.json' },
+  'integrations/openclaw/scripts': { files: RUNTIME, client: 'openclaw', manifest: 'integrations/openclaw/openclaw.plugin.json' },
+  'integrations/muse/scripts': { files: [...RUNTIME, ...SETUP], client: 'muse-code', manifest: 'integrations/muse/manifest.json' },
 }
 
-const banner = (name) => `// A copy of ${SHARED}/${name}, written by scripts/sync-integrations.mjs. Edit it there.\n`
+/**
+ * Integrations that are another's under a name of their own: WorkBuddy runs CodeBuddy Code inside it,
+ * with the same events and tools, so its hook script and hooks are CodeBuddy's, copied as they are.
+ */
+const SIBLINGS = {
+  'integrations/workbuddy': { from: 'integrations/codebuddy', files: ['scripts/hook.mjs', 'hooks/hooks.json'] },
+}
 
-/** The copy is the source with a line saying so, below the shebang if there is one. */
-function copyOf(name) {
-  const source = readFileSync(path.join(ROOT, SHARED, name), 'utf8')
-  if (!source.startsWith('#!')) return banner(name) + source
+const banner = (from) => `// A copy of ${from}, written by scripts/sync-integrations.mjs. Edit it there.\n`
+
+/** The copy is the source with a line saying so, below the shebang if there is one; JSON, which has no comments, as it is. */
+function copyOf(from) {
+  const source = readFileSync(path.join(ROOT, from), 'utf8')
+  if (from.endsWith('.json')) return source
+  if (!source.startsWith('#!')) return banner(from) + source
   const end = source.indexOf('\n') + 1
-  return source.slice(0, end) + banner(name) + source.slice(end)
+  return source.slice(0, end) + banner(from) + source.slice(end)
 }
 
 /** Not a copy: the one file that differs between the integrations, made from the target's manifest. */
@@ -65,24 +80,28 @@ for (const name of readdirSync(path.join(ROOT, SHARED))) {
   if (!used.has(name)) stale.push(`${SHARED}/${name} is copied nowhere: add it to a target in scripts/sync-integrations.mjs`)
 }
 
-for (const [folder, target] of Object.entries(TARGETS)) {
-  const wanted = new Map(target.files.map((name) => [name, copyOf(name)]))
-  wanted.set('client.mjs', clientOf(target))
-  for (const [name, text] of wanted) {
-    const file = path.join(ROOT, folder, name)
-    let current = null
-    try {
-      current = readFileSync(file, 'utf8')
-    } catch {
-      // not there yet
-    }
-    if (current === text) continue
-    if (check) stale.push(`${folder}/${name} differs from ${name === 'client.mjs' ? target.manifest : `${SHARED}/${name}`}`)
-    else {
-      writeFileSync(file, text)
-      console.log(`wrote ${folder}/${name}`)
-    }
+/** Writes one file, or with --check notes that it is out of date. */
+function want(file, text, source) {
+  let current = null
+  try {
+    current = readFileSync(path.join(ROOT, file), 'utf8')
+  } catch {
+    // not there yet
   }
+  if (current === text) return
+  if (check) stale.push(`${file} differs from ${source}`)
+  else {
+    writeFileSync(path.join(ROOT, file), text)
+    console.log(`wrote ${file}`)
+  }
+}
+
+for (const [folder, target] of Object.entries(TARGETS)) {
+  for (const name of target.files) want(`${folder}/${name}`, copyOf(`${SHARED}/${name}`), `${SHARED}/${name}`)
+  want(`${folder}/client.mjs`, clientOf(target), target.manifest)
+}
+for (const [folder, sibling] of Object.entries(SIBLINGS)) {
+  for (const name of sibling.files) want(`${folder}/${name}`, copyOf(`${sibling.from}/${name}`), `${sibling.from}/${name}`)
 }
 
 if (stale.length) {

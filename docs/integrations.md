@@ -24,6 +24,15 @@ installed here, and nothing was signed in to, so all four are written from their
 documentation (and, for Gemini CLI and Qwen Code, their source on GitHub), read on
 2026-10-02, and checked only with events in the documented shape.
 
+Four more were added later the same day, again from documentation read on 2026-10-02:
+**CodeBuddy Code** and **WorkBuddy**, Tencent's coding agent and desktop work agent, which run
+one engine and share one hook script; **Muse Code**, Meta's coding agent; and **OpenClaw**, the
+open-source personal agent, which has no command hooks and gets a plugin of its own that runs
+inside its gateway. None of the first three is installed here. OpenClaw 2026.3.13 is (from
+March; the current release is 2026.9.8), and the plugin was installed into it and loaded, in a
+configuration of its own, and ran a turn against a stand-in model (below). **豆包工作** (Doubao Work, ByteDance) was looked at too and
+has nothing a script can listen to ("Agents with no integration").
+
 ## The contract
 
 Every integration posts the same thing to the relay, `POST /v1/signal` with the
@@ -45,8 +54,13 @@ integration that never reports an end (an older version, a machine that went to 
 Cursor's cloud agents) still works: its session ages out after 30 minutes, and the relay
 counts the work as stopped when it was last heard from.
 
+For a signed-in account that keeps its listening history, the relay also records the merged
+work mode and agent state over the day from these reports, whether or not a player is open
+(docs/history.md, "All day"). Nothing an integration sends changes for it.
+
 Every report carries a `User-Agent` header, `escape-fm/<version> (<client>)` with the
-client `claude-code`, `codex`, `cursor`, `gemini-cli`, `copilot-cli`, `qwen-code` or `droid`, so the relay can tell the integrations and
+client `claude-code`, `codex`, `cursor`, `gemini-cli`, `copilot-cli`, `qwen-code`, `droid`, `codebuddy`,
+`workbuddy`, `muse-code` or `openclaw`, so the relay can tell the integrations and
 their versions apart (docs/analytics.md). It is set once, in `shared/lib.mjs`, on both
 transports (curl and the `fetch` fallback), from a `client.mjs` that
 `scripts/sync-integrations.mjs` writes into each integration from its manifest's
@@ -104,9 +118,35 @@ The relay cleans the name again (`cleanName` in `api/src/names.ts`) and reads it
 from the four tags, which keep dropping everything else. It becomes the device's label
 once the key is claimed, and a new one renames it (docs/accounts.md, "`label`").
 
+The Mac app reads the same Computer Name (`SCDynamicStoreCopyComputerName`, what `scutil`
+gives) and sends it with whether someone is at the Mac (docs/push.md, "The Mac"). The relay
+takes a device and the app with the same name for one computer: the account lists it once,
+and the app's word that the Mac is going to sleep ends that device's tasks. The app is
+sandboxed and cannot read `~/.escape-fm`, so the name is the only thing the two share; a
+plugin renamed with `ESCAPE_FM_COMPUTER_NAME` is a computer of its own beside the app's.
+
 ## Installing and updating
 
-How each is installed is in `release/plugins/README.md` (published as the public
+Decided on 2026-10-02: people do not follow instructions for their agent; their agent does.
+"Connect a computer" (the web player's page and the app's) offers one line to paste into the
+agent on that computer, "Install escape.fm for me: read https://escape.fm/install-plugin.md and
+follow it." (in Chinese, "帮我安装 escape.fm：读 https://escape.fm/install-plugin.md，按里面的步骤做。"),
+and a link to the public repository for installing by hand.
+
+The guide, `public/install-plugin.md`, is written for the agent, in English (it answers in the
+person's language): work out which agent you are, or stop if escape.fm does not support you;
+show the person the commands and what they change, and wait for a yes; install from the
+marketplace where the agent has one and otherwise from a clone of the public repository in
+`~/.escape-fm/plugins` with its `install.mjs`, never by piping a download into a shell and never
+with a credential; check it, and say what the person does next (Codex's `/hooks`, a restart, a
+new session) and how pairing goes. It also says what is sent and never sent, how to update and
+how to uninstall. The player serves it with `public/_headers` as `text/markdown`, cached five
+minutes; `scripts/publish-plugins.mjs` puts it at the public repository's root too.
+`pnpm integrations:check` fails when an integration under `integrations/` (or Claude Code) is
+missing from it with its install command, or when the version it names is not every
+manifest's.
+
+How each is installed by hand is in `release/plugins/README.md` (published as the public
 repository's README) and each integration's own README. Existing installs only update when
 the `version` in a plugin's manifest goes up, and Claude Code only fetches a new version by
 itself when auto-update is on for the marketplace, so the install instructions ask for it:
@@ -132,6 +172,11 @@ integrations/gemini/    Gemini CLI (a Gemini CLI extension, and install.mjs)
 integrations/copilot/   GitHub Copilot CLI (install.mjs, and a Copilot CLI plugin)
 integrations/qwen/      Qwen Code (install.mjs)
 integrations/droid/     Factory Droid (install.mjs, and a Droid plugin)
+integrations/codebuddy/ CodeBuddy Code (install.mjs, and a CodeBuddy plugin)
+integrations/workbuddy/ WorkBuddy (install.mjs; its hook script and hooks are CodeBuddy's, copied)
+integrations/muse/      Muse Code (install.mjs)
+integrations/openclaw/  OpenClaw (a plugin for its gateway, index.js, and install.mjs)
+public/install-plugin.md        the guide an agent reads to install escape.fm
 scripts/sync-integrations.mjs   copies shared/ into each, and writes each one's client.mjs
 scripts/test-integrations.mjs   feeds each hook script its agent's events
 ```
@@ -189,6 +234,25 @@ And for the four added on 2026-10-02:
 | The listener interrupts | **nothing** | **nothing documented** | **nothing** | `Notification`, `idle_prompt` |
 | The turn fails | **nothing** | `errorOccurred` (not used) | `StopFailure` | **nothing documented** |
 | The session ends | `SessionEnd`, not waited for | `sessionEnd` | `SessionEnd` | `SessionEnd` |
+
+And for the four added later that day. OpenClaw's column is its plugin events and its agent
+event stream (`api.runtime.events.onAgentEvent`), not commands:
+
+| Moment | CodeBuddy Code, WorkBuddy | Muse Code | OpenClaw |
+| --- | --- | --- | --- |
+| A session starts | `SessionStart` | `SessionStart` | `session_start` (not used) |
+| The listener sends a message | `UserPromptSubmit` (has the prompt) | `UserPromptSubmit` (has the prompt) | `message_received` (not read; no conversation key in 2026.3) |
+| A run starts | | | `lifecycle` `start` |
+| A tool starts | `PreToolUse` | `PreToolUse` | `before_tool_call` |
+| A tool finishes | `PostToolUse` | `PostToolUse` | `after_tool_call` |
+| A tool fails | `PostToolUseFailure` | `PostToolUseFailure` | `after_tool_call` with `error` |
+| The agent waits for approval | `PermissionRequest`, `Notification` | `PermissionRequest`, `Notification` after six seconds | `lifecycle` `waiting-approval`, `approval`, `execution`; in 2026.3 a result `approval-pending` |
+| The approval is answered | **nothing** | **nothing** | `approval-resolved` |
+| The agent asks a question | `PreToolUse` of `AskUserQuestion` | `PreToolUse` of `request_user_input` | `execution` waiting for `user_input` |
+| The turn ends | `Stop` | `Stop` | `lifecycle` `end` |
+| The listener interrupts | **nothing** | `Interrupt` (1.4.0; not used) | `lifecycle` `end` or `error` |
+| The turn fails | `StopFailure` | `StopFailure` | `lifecycle` `error` |
+| The session ends | `SessionEnd` | `SessionEnd` | `session_end` |
 
 ## Claude Code's outcomes
 
@@ -661,6 +725,230 @@ Sources, read on 2026-10-02:
   shape is not documented beyond a file tool's `success: true`. So Droid sends no outcomes.
 - **A failed turn** has no event.
 
+## CodeBuddy Code and WorkBuddy
+
+Sources, read on 2026-10-02 (CodeBuddy Code 2.161.1 on npm, `@tencent-ai/codebuddy-code`):
+[Hooks reference](https://www.codebuddy.cn/docs/cli/hooks),
+[Hooks guide](https://www.codebuddy.cn/docs/cli/hooks-guide),
+[Plugins reference](https://www.codebuddy.cn/docs/cli/plugins-reference),
+[Settings](https://www.codebuddy.cn/docs/cli/settings) (the same pages are at codebuddy.ai, which
+does not resolve from here);
+for WorkBuddy, [a Tencent Cloud developer article on its hooks](https://developer.cloud.tencent.com/article/2713175),
+which lists what was seen working in the desktop app, and
+[a plugin author's notes on its runtime](https://github.com/lorelum/lorelum/issues/205);
+also [a third party's CodeBuddy integration](https://github.com/l0ng-ai/tty7/pull/936), tried
+against 2.156.0.
+
+### Mechanisms
+
+- **Hooks**, in Claude Code's shape and with its names: `SessionStart`, `SessionEnd`,
+  `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`,
+  `Notification`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `PreCompact`,
+  `PostCompact` and some fifteen more (CodeBuddy Code 1.16.0 and later; "Beta"). Every hook gets
+  `session_id`, `transcript_path`, `cwd`, `permission_mode` (`default`, `plan`, `acceptEdits`,
+  `bypassPermissions`), `hook_event_name`.
+- `UserPromptSubmit` has `prompt`; the tool events `tool_name`, `tool_input`, and `tool_response`
+  after; `Notification` `notification_type` (`permission_prompt`, `idle_prompt` after 60 seconds
+  idle, `auth_success`, `elicitation_dialog`); `SessionStart` `source` (`startup`, `resume`,
+  `clear`, `compact`), and a `compact` start can come in the middle of a turn (seen by the third
+  party); `SessionEnd` `reason`.
+- `PostToolUse` runs "after a successful tool", `PostToolUseFailure` "after a tool call fails";
+  `StopFailure` when an API error ends the turn. `Stop` does not run when the listener interrupts.
+- Tools: `Bash`, `Edit`, `Write`, `MultiEdit`, `Read`, `Glob`, `Grep`, `WebFetch`, `WebSearch`,
+  `AskUserQuestion`, `Task`, MCP tools as `mcp__<server>__<tool>`. (An older page for the IDE plugin
+  names other tools, `execute_command` and the like; it is not the CLI's.)
+- **WorkBuddy runs CodeBuddy Code inside it** (2.137.1 at the time of the notes), reads
+  `~/.workbuddy/settings.json` (`$WORKBUDDY_CONFIG_DIR`), and recognises `.codebuddy-plugin`,
+  `.workbuddy-plugin` and `.claude-plugin` manifests. The article saw `SessionStart`,
+  `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Notification` and `Stop`
+  run in the desktop app, with `last_assistant_message` on `Stop`, and found that the app reads
+  its hooks only when it starts.
+
+### Rules that shape the integration
+
+- Every hook is waited for, with a timeout in seconds (60 by default), and no background option is
+  documented. So every hook hands its report to a process of its own and returns at once.
+- Stdout at exit 0 goes into the context from `SessionStart` and `UserPromptSubmit`; a JSON object
+  is read as an answer, whose `systemMessage` is shown to the listener and not given to the model.
+  The script prints only the first session's welcome, as `systemMessage`.
+- On Windows hooks run in Git Bash.
+- One hook script, `integrations/codebuddy/scripts/hook.mjs`; `scripts/sync-integrations.mjs`
+  copies it, and the hooks, into `integrations/workbuddy/`, which reports as `workbuddy`.
+- Plugins: `.codebuddy-plugin/plugin.json` with `${CODEBUDDY_PLUGIN_ROOT}`, installed with
+  `codebuddy plugin install` from a marketplace. CodeBuddy's plugin system is "compatible with the
+  Claude Code plugin specification", so a marketplace made of this repository would offer the
+  Claude Code plugin, reporting as Claude Code; the READMEs say not to.
+
+### Where configuration lives
+
+| | |
+| --- | --- |
+| CodeBuddy Code, user | `~/.codebuddy/settings.json` (`$CODEBUDDY_CONFIG_DIR`), under `hooks` |
+| CodeBuddy Code, project | `<project>/.codebuddy/settings.json`, `settings.local.json`; merged with the user's |
+| WorkBuddy | `~/.workbuddy/settings.json` (`$WORKBUDDY_CONFIG_DIR`), under `hooks` |
+
+### What they cannot tell
+
+- **An interrupted turn** runs no hook.
+- **Whether a shell command that exits non-zero is a failure** (`PostToolUseFailure`) is not
+  documented. `PostToolUseFailure`'s fields are not documented either; `is_interrupt` is read as
+  Claude Code has it, and its absence counts as a failure.
+- **WorkBuddy's own tools** for office work are not documented by name: they count as steps, and
+  play no part in choosing the work mode.
+- After an approval is answered, nothing runs until the tool finishes.
+
+## Muse Code
+
+Sources, read on 2026-10-02 (Muse Code 1.4.2; the SDK pages are checked against 1.3.0):
+[Muse Code](https://dev.meta.ai/docs/muse-code),
+[Extending](https://dev.meta.ai/docs/muse-code/extending),
+[Configuration](https://dev.meta.ai/docs/muse-code/configuration),
+[Changelog](https://dev.meta.ai/docs/muse-code/changelog),
+[Hooks](https://meta-models.github.io/muse-code-sdk/next/guides/extend/hooks/),
+[Hook events and payloads](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/reference/hook-events/),
+[Plugin manifest](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/reference/manifest/),
+[Importing Claude Code or Codex plugins](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/examples/import-claude-code-or-codex-plugin/).
+
+### Mechanisms
+
+- **Hooks**, in Claude Code's shape: `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+  `PermissionRequest`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch`, `PreLLMCall`,
+  `PostLLMCall`, `PreCompact`, `PostCompact`, `SubagentStart`, `SubagentStop`, `Notification`,
+  `Stop`, `StopFailure`, `SessionEnd`, and since 1.4.0 `Interrupt` (observation only, when the
+  listener cancels a turn with Escape; in the changelog, not yet in the reference).
+- Every hook gets `hook_event_name`, `session_id`, `turn_id` (not on the session's start and end),
+  `cwd`, `transcript_path`, `model`, `permission_mode`. `UserPromptSubmit` has `prompt`; the tool
+  events `tool_name` (the native name), `tool_input`, `tool_use_id`, and `tool_response` after;
+  `PostToolUseFailure` `error`, `is_interrupt` ("currently always `false`") and `duration_ms`;
+  `Notification` `notification_type` (`permission_prompt`), when an approval prompt has waited six
+  seconds; `SessionStart` `source` (`startup`, `resume`, `clear`, `compact`, `fork`).
+- `PostToolUse` runs when "a tool call finished successfully", `PostToolUseFailure` when one
+  "fails or crashes".
+- Tools: `bash` (`powershell` on Windows), `read_file`, `write_file`, `edit_file`, `search`, `glob`,
+  `web_fetch`, `web_search`, `request_user_input`, `read_skill`, `work_status`, `work_stop`, MCP
+  tools as `mcp__<server>__<tool>`.
+
+### Rules that shape the integration
+
+- **There is a user-level configuration**: the `hooks` of `~/.config/muse/settings.json`
+  (`$XDG_CONFIG_HOME/muse/settings.json`), which also needs `"schema_version": 1`. So the
+  integration does not have to write a `.muse/hooks.json` into every project (those load only in a
+  trusted folder). Loaded at a session's start; no reload in a running one.
+- A handler takes exactly `type`, `command`, `timeout` (seconds), `statusMessage`, `async`,
+  `onFailure`, `commandWindows`, `outputCapabilities`. An unknown field skips the handler (`args`
+  among them, which is why the Claude Code plugin, imported, would do nothing); a field of the wrong
+  type rejects the whole file. A matcher made only of letters, digits, `_` and `|` is a list of
+  exact names.
+- `async: true` makes a hook observation only: it runs alongside the turn and nothing it prints
+  counts. Every event but four runs that way. `SessionStart` runs in the foreground to print the
+  first welcome (`systemMessage`, at most 1000 characters); `Stop`, `StopFailure` and `SessionEnd`
+  run in the foreground and hand their report to a process of their own, since unfinished hooks
+  are cancelled when a session shuts down.
+- Hooks run **with a cleared environment**: `HOME`, `PATH`, `USER`, `LOGNAME`, `TMPDIR`, `SHELL`,
+  `LANG`, `LC_ALL`, `TERM` and little else. `node` is found on that `PATH`; the `ESCAPE_FM_*`
+  settings do not reach a hook unless a managed configuration passes them
+  (`managed_hooks_env_vars`).
+- Exit 0 with a JSON object is an answer, in camelCase, and anything else fails open.
+- Native plugins (`.muse-plugin/plugin.json`) take hooks as argument lists with no matcher, and no
+  two hooks may name the same script file, so the integration is not one.
+- A child agent's events come under a session of their own (`child_session_id`); only a start or
+  a message opens a session, so they are not followed, and a `StopFailure` carrying `agent_id` is
+  not the end of the listener's turn.
+
+### What Muse Code cannot tell
+
+- **An interrupted turn**, until `Interrupt` is in the reference: a settings file naming an event
+  an older version does not know might not load at all, so it is not used yet.
+- **Whether a shell command that exits non-zero is a failed tool call** is not documented.
+- After an approval is answered, nothing runs until the tool finishes.
+
+## OpenClaw
+
+Sources, read on 2026-10-02 (OpenClaw 2026.9.8, and the 2026.3.13 installed here):
+[Plugin hooks](https://docs.openclaw.ai/plugins/hooks),
+[Hook reference](https://docs.openclaw.ai/plugins/hooks/reference),
+[Tool policy hooks](https://docs.openclaw.ai/plugins/hooks/tool-policy),
+[Hook event types](https://docs.openclaw.ai/automation/hooks/event-types),
+[Plugins](https://docs.openclaw.ai/tools/plugin),
+[Manifest](https://docs.openclaw.ai/plugins/manifest),
+[package.json](https://docs.openclaw.ai/plugins/manifest/package-json),
+[Capabilities](https://docs.openclaw.ai/plugins/manifest/capabilities),
+[Installing plugins](https://docs.openclaw.ai/cli/plugins/install),
+[Exec approvals](https://docs.openclaw.ai/tools/exec-approvals),
+[Sessions](https://docs.openclaw.ai/concepts/session),
+and on `main` of `openclaw/openclaw`: `src/plugins/hook-types.ts`, `src/infra/agent-events.ts`,
+`src/agents/agent-run-approval-wait.ts`; and the type declarations and code of the 2026.3.13
+package.
+
+### Mechanisms
+
+- **No command hooks.** A plugin is JavaScript loaded into the gateway's own process (an
+  `openclaw.plugin.json` with `id` and `configSchema`, and `package.json` naming the entry under
+  `openclaw.extensions`), and subscribes with `api.on(name, handler)` to typed hooks, and with
+  `api.runtime.events.onAgentEvent` to the agent event stream. Internal hooks (`HOOK.md` and a
+  handler in `~/.openclaw/hooks/`) are of the same kind and add nothing needed here.
+- Typed hooks used, none of which needs a grant: `message_received` (fire and forget),
+  `before_tool_call` (waited for; the handler returns nothing and at once), `after_tool_call`
+  (`toolName`, `error` when the result is an error, `durationMs`), `session_end`, `gateway_start`.
+  Not used: `agent_end`, `before_agent_run`, `llm_input` and `llm_output` carry the conversation
+  and, in newer versions, need `plugins.entries.<id>.hooks.allowConversationAccess`, which a
+  2026.3 configuration does not accept at all.
+- The agent event stream: `lifecycle` (`start`, `end`, `error`, and in newer versions
+  `waiting-approval` and `approval-resolved` with `approvalId`), `execution` (an approval `pending`
+  or `resolved`, or `waiting` for `user_input`), `approval` (`requested`, `resolved`), and the
+  tool and assistant streams, which are not used. A lifecycle event always carries the
+  conversation's `sessionKey`; the others lose it for a run not shown in the Control UI, so the
+  plugin learns which conversation a run belongs to when it starts. Heartbeat runs are marked
+  `isHeartbeat`.
+- **The conversation is the session**: `sessionKey`, `agent:<agentId>:main` for direct messages by
+  default, `…:<channel>:direct:<peer>` or `…:<channel>:group:<id>` and the like otherwise. The
+  `sessionId` under it changes at `/new`, `/reset` and daily or idle resets, and `session_end`
+  says so; the plugin reports the end and the next message opens the conversation again.
+
+### Rules that shape the integration
+
+- The plugin runs in the gateway, which lives for days, so it does not run the shared code
+  itself (that is written for a process per event: it takes the time once). It hands each event to
+  `scripts/hook.mjs` on a process of its own, one after another so the session's file is written
+  in order, with at most 64 waiting; the hook script reports as every other one does.
+- Only what is needed crosses: the conversation's key (sent only as its digest), the event, a
+  tool's name, whether it failed. The plugin never reads a message, a prompt, a reply, a tool's
+  input or result (but whether it is an error, and in 2026.3 whether it says `approval-pending`).
+  So the work mode comes from the tools alone.
+- **What "the listener typed" means.** OpenClaw is mostly talked to from chat apps: a message
+  arriving is the listener typing. In a direct conversation the sender is taken to be the owner,
+  since OpenClaw lets only paired or allowed senders talk to it there; a message in a group or a
+  channel (`:group:`, `:channel:` in the key) is not counted as the listener, though the agent's
+  work on it is. The typed hooks say nothing of who the sender is; newer versions put
+  `senderIsOwner` on `before_agent_run`, which needs the grant.
+- Exec approvals: newer versions wait within the run, between `before_tool_call` and
+  `after_tool_call`, and say so on the stream. In 2026.3 the command returns at once with
+  `status: "approval-pending"` and the run ends; the plugin keeps the conversation `waiting` past
+  that end until the next run (the one after `/approve`) or the conversation's end.
+- Newer versions load a plugin with hooks at the gateway's start only when the manifest says
+  `activation.onStartup`; 2026.3 ignores the field.
+- `install.mjs` copies the plugin to `~/.escape-fm/openclaw` and runs
+  `openclaw plugins install --link` on it, with `--force` when the first try fails (newer versions
+  ask before linking a local folder). **Seen** with 2026.3.13, in a configuration of its own
+  (`OPENCLAW_HOME`, `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH` in a temporary folder): the link
+  adds the folder to `plugins.load.paths`, `plugins.entries.escape-fm` and `plugins.installs`,
+  linking again changes nothing, and `openclaw plugins info escape-fm` says "Status: loaded".
+  OpenClaw warns when the package's name and the manifest's id differ, so both are `escape-fm`.
+- **Seen** with 2026.3.13, in the same configuration: a turn run with `openclaw agent --local`
+  against a stand-in model on localhost, which asked for one tool (`write` in one run, `exec` in
+  another) and then answered, with a stand-in relay. The relay heard `running` as the run started
+  and `idle`, with the step's outcome `[true]`, as it ended, under `escape-fm/0.5.0 (openclaw)`.
+  `openclaw agent` brings no message from a channel, so `message_received` did not run and there
+  was no `user`.
+
+### What OpenClaw cannot tell
+
+- **Who sent a message**, as above.
+- **A message, in 2026.3**: its `message_received` carries no conversation key, so the
+  conversation shows `running` from the run's start, with no `user` before it.
+- **A run on a CLI backend**, in 2026.3, runs no tool hooks; only its start and end are heard.
+- **A stopped run** ends with `end` or `error` like any other, which is right for the music.
+
 ## Agents with no integration
 
 Looked at on 2026-10-02, and left out:
@@ -691,6 +979,19 @@ Looked at on 2026-10-02, and left out:
   it cannot tell a finished answer from a question, or anything else.
 - **Copilot's cloud agent** reads hooks only from a repository's `.github/hooks`, in a
   sandbox that cannot reach the relay; it is not heard.
+- **豆包工作 (Doubao Work, ByteDance).** Looked at on 2026-10-02 in its
+  [help center](https://www.doubao.com/work/docs/): its "plugins" (also called connectors) are MCP
+  servers the model chooses to call, by HTTP or a local command
+  ([plugins](https://www.doubao.com/work/docs/zh-cn/articles/705018132598-plugins)); its skills
+  are `skill.md` files the model reads
+  ([skills](https://www.doubao.com/work/docs/zh-cn/articles/081010973544-skills)); approvals and
+  progress are shown in its own window
+  ([work tasks](https://www.doubao.com/work/docs/zh-cn/articles/047323472965-work-task-mode),
+  [notice](https://www.doubao.com/legal/DoubaoAgentModeNotice)). There are no hooks, no plugin that
+  runs on its events, no webhooks, no local API and no CLI of its own
+  ([how to get it](https://www.doubao.com/work/docs/zh-cn/articles/462191106451-access)). An MCP
+  server would be heard only when the model decides to call it, which is not listening. Not to be
+  confused with ByteDance's TRAE, an editor that does document hooks.
 
 ## What has not been seen working
 
@@ -749,5 +1050,23 @@ was run:
 - Droid: whether a subagent's tools come under the parent's `session_id`; the plugin
   through `.factory-plugin/marketplace.json`; the order of `SessionStart` and the first
   `UserPromptSubmit`.
+
+CodeBuddy Code, WorkBuddy and Muse Code, all of it still open, since none of them was run:
+- That each runs the hooks as written, and the payloads' fields, `PostToolUseFailure`'s above all.
+- CodeBuddy: whether a background option exists after all; the plugin from
+  `.codebuddy-plugin/plugin.json`; whether a failed shell command runs `PostToolUseFailure`.
+- WorkBuddy: which of its events run in the desktop app beyond the seven seen by others
+  (`PostToolUseFailure`, `StopFailure`, `SessionEnd`); its tools' names; whether it shows a
+  `systemMessage`; the `PATH` it gives a hook when opened from the Dock.
+- Muse Code: whether a settings file naming `Interrupt` loads in 1.3; whether `node` is on the
+  `PATH` a hook gets when Muse Code is not started from a shell.
+
+OpenClaw, still open:
+- A message from a chat channel through a running gateway: `message_received`, approvals and
+  questions, and a conversation's end. Only `openclaw agent --local` was run (above).
+- Any of it in a current version (2026.9): the events' names and fields there are from its
+  documentation and source.
+- Whether a newer `openclaw plugins install --link` asks for `--force`, and what it says.
+- Whether `message_received` fires for the Control UI's own chat.
 
 Windows has not been tried for any of them.

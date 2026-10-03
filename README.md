@@ -1,11 +1,20 @@
 # escape.fm plugins
 
 [escape.fm](https://escape.fm) is background music that follows your work. These
-plugins tell the player what your coding agent is doing, so the music can step back
+plugins tell the player what your AI agent is doing, so the music can step back
 while the agent runs and come forward when it needs you.
 
 They are open source so that you can check, line by line, that they send two tags,
 whether the agent's steps succeed, and nothing about your work.
+
+The easiest way to install is to ask your agent to do it. Paste this into it:
+
+> Install escape.fm for me: read https://escape.fm/install-plugin.md and follow it.
+
+It works out which agent it is, shows you what it will change, and installs the right plugin.
+[`install-plugin.md`](install-plugin.md) is that guide, written for the agent.
+
+Or by hand:
 
 | Agent | Folder | Install |
 | --- | --- | --- |
@@ -16,6 +25,10 @@ whether the agent's steps succeed, and nothing about your work.
 | GitHub Copilot CLI | [`integrations/copilot/`](integrations/copilot/README.md) | Clone this repository and run `node integrations/copilot/install.mjs` |
 | Qwen Code | [`integrations/qwen/`](integrations/qwen/README.md) | Clone this repository and run `node integrations/qwen/install.mjs` |
 | Factory Droid | [`integrations/droid/`](integrations/droid/README.md) | Clone this repository and run `node integrations/droid/install.mjs` |
+| CodeBuddy Code | [`integrations/codebuddy/`](integrations/codebuddy/README.md) | Clone this repository and run `node integrations/codebuddy/install.mjs` |
+| WorkBuddy | [`integrations/workbuddy/`](integrations/workbuddy/README.md) | Clone this repository and run `node integrations/workbuddy/install.mjs`, then quit WorkBuddy and open it again |
+| Muse Code | [`integrations/muse/`](integrations/muse/README.md) | Clone this repository and run `node integrations/muse/install.mjs` |
+| OpenClaw | [`integrations/openclaw/`](integrations/openclaw/README.md) | On the gateway's machine, clone this repository, run `node integrations/openclaw/install.mjs`, then `openclaw gateway restart` |
 
 The first session after installing opens the player in your browser, already paired
 with your machine. Press play there. They all share one pairing key, so one player

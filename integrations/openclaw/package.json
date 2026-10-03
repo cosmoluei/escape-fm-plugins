@@ -1,0 +1,11 @@
+{
+  "name": "escape-fm",
+  "version": "0.5.0",
+  "private": true,
+  "description": "escape.fm for OpenClaw: background music that follows your work.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://escape.fm",
+  "repository": "https://github.com/escape-fm/plugins",
+  "openclaw": { "extensions": ["./index.js"] }
+}
